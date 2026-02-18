@@ -881,7 +881,7 @@ As specified by CAT-FR-SF-04, automatic schema validation against stored SHACL s
 NOTE: For backward compatibility, automatic schema validation during upload can be re-enabled via the configuration property `federated-catalogue.verification.schema=true`.
 
 The cryptographic verification (trust verification) checks all proofs in the SD if the signature, the offered key and the content match.
-Further, the key is validated against the Gaia-X Registry.
+When Gaia-X Trust Framework validation is enabled, the key is additionally validated against the Gaia-X Trust Anchor Registry to verify a valid trust anchor chain.  When this setting is disabled (the default), signature verification still ensures that signatures are valid and match the content.
 When checking whether the proofs match the Self-Description or the contained Verifiable Credentials, the JSON object is normalized using the Universal RDF Dataset Canonicalization Algorithm URDNA2015footnote:[https://w3c-ccg.github.io/rdf-dataset-canonicalization/spec/#dfn-urdna2015[RDF Dataset Canonicalization. A Standard RDF Dataset Canonicalization Algorithm. W3C, Final Community Group Report 15 October 2022]] as specified by Gaia-X.
 This allows a robust signing of Self-Descriptions.
 The normalization algorithm extracts the RDF graph from the claim to perform the signing.
@@ -925,11 +925,15 @@ flowchart LR
     end
     subgraph four [Trust Verification]
         direction TB
-        twoA(Check if signatures exist, <br> if signatures are in expected format and <br> extract signatures)
-        twoA --> twoB(Check if public key valid)
-        twoB --> twoC(Check if signatures match)
-        twoC --> |For all <br> Verifiable presentation <br> All verifiable credentials| twoB
-        twoC --> twoD(Extract issuer participant ID <br> and check if issuers match)
+        fourA(Check if signatures exist, <br> if signatures are in expected format and <br> extract signatures)
+        fourA --> fourB(Check if signatures match)
+        fourB --> |For all <br> Verifiable presentation <br> All verifiable credentials| fourA
+        fourB --> fourC(Check if public key valid)
+        fourC --> fourD{{Gaia-X Trust Framework <br> enabled?}}
+        fourD --> |yes| fourE(Validate against <br> Gaia-X Trust Anchor Registry)
+        fourD --> |no| fourF([Skip trust anchor validation])
+        fourF --> fourG(Extract issuer participant ID <br> and check if issuers match)
+        fourE --> fourG
     end
     one --> two
     two --> three
@@ -938,6 +942,7 @@ flowchart LR
         direction TB
         A(Throws an error if check fails)
         B([Operation on SD])
+        C{{Configuration-dependent step}}
     end
 ....
 ////
