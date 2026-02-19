@@ -261,7 +261,7 @@ public interface VerificationService {
 [#_upload_schema_validation_configuration]
 ===== Schema Validation Configuration
 
-As specified by CAT-FR-SF-04, automatic SHACL schema validation during asset upload is disabled by default. This behavior is controlled by the `schema` verification property.
+Automatic SHACL schema validation during asset upload is disabled by default. This behavior is controlled by the `schema` verification property.
 
 [options="header",cols="2,1,3"]
 |===
@@ -283,7 +283,7 @@ As specified by CAT-FR-SF-04, automatic SHACL schema validation during asset upl
 [#_schema_validation_service]
 ===== Schema Validation Service
 
-As specified by CAT-FR-SF-04, automatic schema validation has been **removed from the upload verification flow**. The Schema Validation Service was extracted from the `VerificationService` to provide on-demand SHACL schema validation of stored assets. This service prepares the infrastructure for CAT-FR-CO-05, which will expose on-demand validation of stored assets against specific schemas via a dedicated API endpoint.
+Automatic schema validation has been **removed from the upload verification flow**. The Schema Validation Service was extracted from the `VerificationService` to provide on-demand SHACL schema validation of stored assets. This service prepares the infrastructure for CAT-FR-CO-05, which will expose on-demand validation of stored assets against specific schemas via a dedicated API endpoint.
 
 [source,java]
 ----
