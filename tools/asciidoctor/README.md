@@ -39,8 +39,12 @@ docker run --rm -v "$(pwd)":/documents xfsc-asciidoctor \
 ```bash
 docker run --rm -v "$(pwd)":/documents xfsc-asciidoctor \
   asciidoctor -r asciidoctor-diagram \
-  federated-catalogue/src/docs/architecture/catalogue-architecture.adoc
+  ./federated-catalogue/src/docs/architecture/catalogue-architecture.adoc
 ```
+
+Note that the path is relative to the directory you run the command from (pwd). 
+The above example assumes you're in the repository root. 
+Adjust the path accordingly if you're running it from somewhere else.
 
 The rendered file will be written next to the source (e.g. `catalogue-architecture.html`).
 
