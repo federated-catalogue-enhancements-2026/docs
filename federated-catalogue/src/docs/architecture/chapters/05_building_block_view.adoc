@@ -265,7 +265,7 @@ This component is used by the _Verification Service_ to extract Claims from Self
 
 ==== Graph Store
 
-The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from Self-Descriptions) and adds them to the graph database. The Graph Database only contains claims from active Self-Descriptions and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests.
+The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from Self-Descriptions) and adds them to the graph database. The Graph Database only contains claims from active Self-Descriptions and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database.
 
 [source,java]
 ----
@@ -292,13 +292,31 @@ public interface GraphStore {
     void deleteClaims(String credentialSubject);
 
     /**
-     * Query the graph when Cypher query is passed in query object and this
+     * Query the graph when query is passed in query object and this
      * returns list of Maps with key value pairs as a result.
      *
      * @param sdQuery is the query to be executed
      * @return List of Maps
      */
     PaginatedResults<Map<String, Object>> queryData(GraphQuery sdQuery);
+
+    /**
+     * Returns the query language supported by this graph store implementation.
+     *
+     * @return the supported QueryLanguage, or null if the store is disabled
+     */
+    default QueryLanguage getSupportedQueryLanguage() {
+        return null;
+    }
+
+    /**
+     * Returns the type of graph database backend.
+     *
+     * @return the GraphBackendType of this store
+     */
+    default GraphBackendType getBackendType() {
+        return GraphBackendType.NONE;
+    }
 
 }
 ----

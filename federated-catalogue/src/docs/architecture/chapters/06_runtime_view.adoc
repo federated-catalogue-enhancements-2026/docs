@@ -771,7 +771,7 @@ When calling `GET /query` a HTML page with a query input form is displayed.
 
 ==== Query the catalogue
 
-The query endpoint accepts an optional `queryLanguage` query parameter to select the query language. The default is `OPENCYPHER` (for the Neo4j backend). When the Fuseki backend is configured, use `queryLanguage=SPARQL` to issue SPARQL-star queries. Queries in a language not supported by the active backend are rejected with HTTP 501.
+The query endpoint accepts an optional `queryLanguage` query parameter to select the query language. The default is `OPENCYPHER` (for the Neo4j backend). When the Fuseki backend is configured, use `queryLanguage=SPARQL` to issue SPARQL-star queries. Queries in a language not supported by the active backend are rejected with HTTP 422 (Unprocessable Entity), including a message that names the active backend, the supported language and the expected `Content-Type`. When the graph store is disabled (`graphstore.impl=dummy`), queries are rejected with HTTP 503 (Service Unavailable).
 
 Only read queries are allowed. Write queries (e.g., `CREATE`/`DELETE` in openCypher, `INSERT`/`DELETE` in SPARQL) are rejected with HTTP 500.
 
@@ -781,14 +781,43 @@ sequenceDiagram
     autonumber
     actor User
     participant API
+    participant Validator as QueryLanguageValidator
     participant Graph as Graph-DB
     User ->> + API: POST /query?queryLanguage={OPENCYPHER|SPARQL}
+    API ->> + Validator: validate(queryLanguage)
+    alt graph store disabled
+        Validator -->> API: GraphStoreDisabledException (503)
+        API -->> User: 503 Service Unavailable
+    else language not supported
+        Validator -->> API: UnsupportedQueryLanguageException (422)
+        API -->> User: 422 Unprocessable Entity
+    else language supported
+        Validator -->> - API: OK
+    end
     API ->> + Graph: queryData(sdQuery)
     Graph ->> Graph: validateQuery()
     Note right of Graph: Only read queries are allowed
     Graph ->> Graph: executeQuery()
     Graph -->> -API: QueryResult
     API -->> -User: QueryResult
+....
+
+==== Query backend information
+
+The `GET /query/info` endpoint returns metadata about the active graph database backend, including the backend type, supported query language, expected `Content-Type` header, an example query and a documentation URL. When the graph store is disabled, the response indicates `enabled: false`.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Graph as Graph-DB
+    User ->> + API: GET /query/info
+    API ->> + Graph: getBackendType(), getSupportedQueryLanguage()
+    Graph -->> - API: backendType, queryLanguage
+    API ->> API: build QueryInfo response
+    API -->> - User: QueryInfo (backend, queryLanguage, contentType, enabled, exampleQuery, documentation)
 ....
 
 
