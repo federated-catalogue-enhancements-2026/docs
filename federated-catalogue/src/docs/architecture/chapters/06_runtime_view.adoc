@@ -771,7 +771,7 @@ When calling `GET /query` a HTML page with a query input form is displayed.
 
 ==== Query the catalogue
 
-The query endpoint accepts an optional `queryLanguage` query parameter to select the query language. The default is `OPENCYPHER` (for the Neo4j backend). When the Fuseki backend is configured, use `queryLanguage=SPARQL` to issue SPARQL-star queries. Queries in a language not supported by the active backend are rejected with HTTP 422 (Unprocessable Entity), including a message that names the active backend, the supported language and the expected `Content-Type`. When the graph store is disabled (`graphstore.impl=dummy`), queries are rejected with HTTP 503 (Service Unavailable).
+The query endpoint accepts an optional `queryLanguage` query parameter to select the query language. The default is `OPENCYPHER` (for the Neo4j backend). When the Fuseki backend is configured, use `queryLanguage=SPARQL` to issue SPARQL-star queries. Queries in a language not supported by the active backend are rejected with HTTP 422 (Unprocessable Entity), including a message that names the active backend, the supported language and the expected `Content-Type`. When the graph store is disabled (`graphstore.impl=none`), queries are rejected with HTTP 503 (Service Unavailable).
 
 Only read queries are allowed. Write queries (e.g., `CREATE`/`DELETE` in openCypher, `INSERT`/`DELETE` in SPARQL) are rejected with HTTP 500.
 
