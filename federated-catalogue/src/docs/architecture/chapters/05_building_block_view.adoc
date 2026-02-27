@@ -180,90 +180,22 @@ Notes:
 
 * The SD is checked as a whole. If the verification of the VCs fails, the verification of the whole SD fails.
 
-[source,java]
-----
-/**
- * Validation Self-Description interface.
- */
-@Service
-public interface VerificationService {
-
-  /**
-   * The function validates the Self-Description as JSON and tries to parse the json handed over.
-   *
-   * @param payload ContentAccessor to SD which should be syntactically validated.
-   * @return a Participant metadata validation result. If the validation fails, the reason explains the issue.
-   */
-  VerificationResultParticipant verifyParticipantSelfDescription(ContentAccessor payload) throws VerificationException;
-
-  /**
-   * The function validates the Self-Description as JSON and tries to parse the json handed over.
-   *
-   * @param payload ContentAccessor to SD which should be syntactically validated.
-   * @return a Verification result. If the verification fails, the reason explains the issue.
-   */
-  VerificationResultOffering verifyOfferingSelfDescription(ContentAccessor payload) throws VerificationException;
-
-  /**
-   * The function validates the Self-Description as JSON and tries to parse the json handed over.
-   *
-   * @param payload ContentAccessor to SD which should be syntactically validated.
-   * @return a Verification result. If the verification fails, the reason explains the issue.
-   */
-  VerificationResultResource verifyResourceSelfDescription(ContentAccessor payload) throws VerificationException;
-
-  /**
-   * The function validates the Self-Description as JSON and tries to parse the json handed over.
-   *
-   * @param payload ContentAccessor to SD which should be syntactically validated.
-   * @return a Self-Description metadata validation result. If the validation fails, the reason explains the issue.
-   */
-  VerificationResult verifySelfDescription(ContentAccessor payload) throws VerificationException;
-
-  /**
-   * The function validates the Self-Description as JSON and tries to parse the json handed over.
-   *
-   * @param payload
-   * @param verifySemantics
-   * @param verifySchema
-   * @param verifyVPSignatures
-   * @param verifyVCSignatures
-   * @return
-   * @throws VerificationException
-   */
-  VerificationResult verifySelfDescription(ContentAccessor payload, boolean verifySemantics, boolean verifySchema,
-      boolean verifyVPSignatures, boolean verifyVCSignatures) throws VerificationException;
-
-  /**
-   * Extract claims from the given payload. This does not do any validation of the payload.
-   *
-   * @param payload The payload to extract claims from.
-   * @return The list of extracted claims.
-   */
-  List<SdClaim> extractClaims(ContentAccessor payload);
-
-  /**
-   * The function validates the Self-Description against the given schema.
-   *
-   * @param payload ContentAccessor to SD which should be validated.
-   * @param schema ContentAccessor - the schema to validate SD against (null = composite)
-   * @return the result of the semantic validation.
-   * @deprecated Use {@link SchemaValidationService#validateSelfDescriptionAgainstSchema} directly.
-   */
-  @Deprecated
-  SchemaValidationResult verifySelfDescriptionAgainstSchema(ContentAccessor payload, ContentAccessor schema);
-
-  /**
-   * The function validates the Self-Description against the composite schema.
-   *
-   * @param payload ContentAccessor to SD which should be validated.
-   * @return the result of the semantic validation.
-   * @deprecated Use {@link SchemaValidationService#validateSelfDescriptionAgainstCompositeSchema} directly.
-   */
-  @Deprecated
-  SchemaValidationResult verifySelfDescriptionAgainstCompositeSchema(ContentAccessor payload);
-}
-----
+[mermaid, width=2000]
+....
+classDiagram
+    class VerificationService {
+        <<interface>>
+        +verifyParticipantSelfDescription(payload) VerificationResultParticipant
+        +verifyOfferingSelfDescription(payload) VerificationResultOffering
+        +verifyResourceSelfDescription(payload) VerificationResultResource
+        +verifySelfDescription(payload) VerificationResult
+        +verifySelfDescription(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) VerificationResult
+        +extractClaims(payload) List~SdClaim~
+        +verifySelfDescriptionAgainstSchema(payload, schema) SchemaValidationResult
+        +verifySelfDescriptionAgainstCompositeSchema(payload) SchemaValidationResult
+    }
+    note for VerificationService "verifySelfDescriptionAgainstSchema and\nverifySelfDescriptionAgainstCompositeSchema\nare deprecated — use SchemaValidationService directly"
+....
 
 [#_verification_strategy_pattern]
 ===== Verification Strategy Pattern
@@ -272,49 +204,29 @@ The `VerificationServiceImpl` follows the Strategy pattern. It acts as a thin Co
 
 The `resolveStrategy(ContentAccessor)` method selects the appropriate strategy for a given payload. Currently it always resolves to `CredentialVerificationStrategy`.
 
-[source,java]
-----
-/**
- * Strategy interface for Self-Description verification and data extraction.
- * Implementations encapsulate the specific parsing, semantic validation,
- * schema verification, signature verification, and claim extraction logic.
- */
-public interface VerificationStrategy {
-
-  /**
-   * Verifies a Self-Description payload according to the implementation's logic.
-   *
-   * @param payload            the Self-Description content to verify
-   * @param strict             whether strict mode is enabled (typed endpoints)
-   * @param expectedClass      the expected Trust Framework base class, or UNKNOWN
-   * @param verifySemantics    whether to perform semantic verification
-   * @param verifySchema       whether to perform schema verification
-   * @param verifyVPSignatures whether to verify VP signatures
-   * @param verifyVCSignatures whether to verify VC signatures
-   * @return the verification result
-   * @throws VerificationException if verification fails
-   */
-  VerificationResult verifySelfDescription(ContentAccessor payload, boolean strict,
-      TrustFrameworkBaseClass expectedClass, boolean verifySemantics, boolean verifySchema,
-      boolean verifyVPSignatures, boolean verifyVCSignatures) throws VerificationException;
-
-  /**
-   * Extracts claims from the given payload without performing verification.
-   *
-   * @param payload the Self-Description content to extract claims from
-   * @return the list of extracted claims
-   */
-  List<SdClaim> extractClaims(ContentAccessor payload);
-
-  /**
-   * Override URI for one of the Trust Framework base classes.
-   *
-   * @param baseClass the base class to override
-   * @param uri       the new URI
-   */
-  void setBaseClassUri(TrustFrameworkBaseClass baseClass, String uri);
-}
-----
+[mermaid, width=2000]
+....
+classDiagram
+    class VerificationServiceImpl {
+        -verifySemantics : boolean
+        -verifySchema : boolean
+        -verifyVPSignature : boolean
+        -verifyVCSignature : boolean
+        +resolveStrategy(payload) VerificationStrategy
+    }
+    class VerificationStrategy {
+        <<interface>>
+        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
+        +extractClaims(payload) List~SdClaim~
+        +setBaseClassUri(baseClass, uri) void
+    }
+    class CredentialVerificationStrategy {
+        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
+        +extractClaims(payload) List~SdClaim~
+    }
+    VerificationServiceImpl --> VerificationStrategy : delegates to
+    VerificationStrategy <|.. CredentialVerificationStrategy
+....
 
 `VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety. The `resolveStrategy(ContentAccessor)` method currently always resolves to `CredentialVerificationStrategy`.
 
@@ -345,50 +257,17 @@ Automatic SHACL schema validation during asset upload is disabled by default. Th
 
 Automatic schema validation has been **disabled in the upload verification flow**. The Schema Validation Service was extracted from the `VerificationService` to provide on-demand SHACL schema validation of stored assets.
 
-[source,java]
-----
-/**
- * Dedicated service for SHACL schema validation of Self-Descriptions.
- * Extracted from VerificationService to support on-demand validation.
- */
-@Service
-public interface SchemaValidationService {
-
-  /**
-   * Validates a Self-Description payload against a specific SHACL shape graph.
-   *
-   * @param payload The Self-Description to validate.
-   * @param schema The SHACL shape graph to validate against.
-   * @return the result of the schema validation.
-   */
-  SchemaValidationResult validateSelfDescriptionAgainstSchema(ContentAccessor payload, ContentAccessor schema);
-
-  /**
-   * Validates a Self-Description payload against the composite schema (union of all stored SHACL shapes).
-   *
-   * @param payload The Self-Description to validate.
-   * @return the result of the schema validation.
-   */
-  SchemaValidationResult validateSelfDescriptionAgainstCompositeSchema(ContentAccessor payload);
-
-  /**
-   * Validates pre-extracted claims against a specific SHACL shape graph.
-   *
-   * @param claims The extracted claims to validate.
-   * @param schema The SHACL shape graph to validate against.
-   * @return the result of the schema validation.
-   */
-  SchemaValidationResult validateClaimsAgainstSchema(List<SdClaim> claims, ContentAccessor schema);
-
-  /**
-   * Validates pre-extracted claims against the composite schema (union of all stored SHACL shapes).
-   *
-   * @param claims The extracted claims to validate.
-   * @return the result of the schema validation.
-   */
-  SchemaValidationResult validateClaimsAgainstCompositeSchema(List<SdClaim> claims);
-}
-----
+[mermaid, width=2000]
+....
+classDiagram
+    class SchemaValidationService {
+        <<interface>>
+        +validateSelfDescriptionAgainstSchema(payload, schema) SchemaValidationResult
+        +validateSelfDescriptionAgainstCompositeSchema(payload) SchemaValidationResult
+        +validateClaimsAgainstSchema(claims, schema) SchemaValidationResult
+        +validateClaimsAgainstCompositeSchema(claims) SchemaValidationResult
+    }
+....
 
 ===== Revalidation Service
 
