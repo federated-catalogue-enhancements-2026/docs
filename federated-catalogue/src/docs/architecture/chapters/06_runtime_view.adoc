@@ -735,8 +735,8 @@ sequenceDiagram
     SchemaStore -->> -API:OK
     API -->> - User:OK
     loop For Each SD
-        Revalidation ->> + SchemaValidationService:Validate SDs
-        SchemaValidationService -->> - Revalidation:Result
+        Revalidation ->> + Verification:Validate SDs
+        Verification -->> - Revalidation:Result
         alt If NOK
             Revalidation ->> SchemaStore:Revoke SD
         end
@@ -802,10 +802,20 @@ sequenceDiagram
     participant API
     participant VerificationService
     User ->> + API:POST /verifications/self-descriptions
-    API ->> + VerificationService:verifySelfDescription(sd)
+    API ->> + VerificationService:verifySelfDescription(sd, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
     VerificationService --> VerificationService:[Verify Syntax]
-    VerificationService --> VerificationService:[Verify Signatures]
-    VerificationService --> VerificationService:[Verify Schema]
+    opt verifySemantics (default true)
+        VerificationService --> VerificationService:[Verify Semantic]
+        VerificationService ->> VerificationService:[Extract SD Type]
+    end
+    opt verifySchema (default false)
+        VerificationService ->> SchemaValidationService:[Validate Claims vs SHACL]
+        SchemaValidationService -->> VerificationService:SemanticValidationResult
+    end
+    opt verifyVPSig / verifyVCSig (default true)
+        VerificationService --> VerificationService:[Verify Signatures]
+    end
+    VerificationService ->> VerificationService:[Extract Claims]
     VerificationService -->> - API:VerificationResult
     API -->> -User: VerificationResult
 ....
@@ -869,7 +879,7 @@ sequenceDiagram
 
 ==== Verify Self-Description
 
-The verification of SDs consists out of three parts (syntactic, cryptographic, semantic verification).
+The verification of SDs consists of four parts (syntactic, semantic, schema, and trust verification).
 Besides verifying the SD additional tasks are executed (e.g., parsing, claim extraction).
 
 `VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full VP/VC parsing, semantic validation, schema validation, signature verification, and claim extraction logic. See <<_verification_strategy_pattern>> for details.
@@ -882,8 +892,8 @@ Automatic schema validation against stored SHACL shapes has been **disabled in t
 
 NOTE: For backward compatibility, automatic schema validation during upload can be re-enabled via the configuration property `federated-catalogue.verification.schema=true`.
 
-The cryptographic verification (trust verification) checks all proofs in the SD if the signature, the offered key and the content match.
-Further, the key is validated against the Gaia-X Registry.
+The trust verification checks all proofs in the SD if the signature, the offered key and the content match.
+When Gaia-X Trust Framework validation is enabled, the key is additionally validated against the Gaia-X Trust Anchor Registry to verify a valid trust anchor chain.  When this setting is disabled (the default), signature verification still ensures that signatures are valid and match the content.
 When checking whether the proofs match the Self-Description or the contained Verifiable Credentials, the JSON object is normalized using the Universal RDF Dataset Canonicalization Algorithm URDNA2015footnote:[https://w3c-ccg.github.io/rdf-dataset-canonicalization/spec/#dfn-urdna2015[RDF Dataset Canonicalization. A Standard RDF Dataset Canonicalization Algorithm. W3C, Final Community Group Report 15 October 2022]] as specified by Gaia-X.
 This allows a robust signing of Self-Descriptions.
 The normalization algorithm extracts the RDF graph from the claim to perform the signing.
@@ -905,10 +915,6 @@ sequenceDiagram
     VerificationService ->> VerificationService:[Extract Participant]
 ....
 
-image:06_verification_flow.png[Verification Workflow]
-////
-This is the source code for the figure above. Directly added the figure due to a bug in mmdc
-
 [mermaid, width=2000]
 ....
 flowchart LR
@@ -922,16 +928,22 @@ flowchart LR
     end
     subgraph three [Schema Validation]
         direction TB
-        threeA([Extract Claims])
-        threeA --> threeB(Check claims vs SHACL)
+        threeA{{verification.schema <br> enabled?}}
+        threeA --> |yes| threeB([Extract Claims])
+        threeB --> threeC(Check claims vs SHACL <br> via SchemaValidationService)
+        threeA --> |no — default| threeD([Skip schema validation])
     end
     subgraph four [Trust Verification]
         direction TB
-        twoA(Check if signatures exist, <br> if signatures are in expected format and <br> extract signatures)
-        twoA --> twoB(Check if public key valid)
-        twoB --> twoC(Check if signatures match)
-        twoC --> |For all <br> Verifiable presentation <br> All verifiable credentials| twoB
-        twoC --> twoD(Extract issuer participant ID <br> and check if issuers match)
+        fourA(Check if signatures exist, <br> if signatures are in expected format and <br> extract signatures)
+        fourA --> fourB(Check if signatures match)
+        fourB --> |For all <br> Verifiable presentation <br> All verifiable credentials| fourA
+        fourB --> fourC(Check if public key valid)
+        fourC --> fourD{{Gaia-X Trust Framework <br> enabled?}}
+        fourD --> |yes| fourE(Validate against <br> Gaia-X Trust Anchor Registry)
+        fourD --> |no| fourF([Skip trust anchor validation])
+        fourF --> fourG(Extract issuer participant ID <br> and check if issuers match)
+        fourE --> fourG
     end
     one --> two
     two --> three
@@ -940,6 +952,7 @@ flowchart LR
         direction TB
         A(Throws an error if check fails)
         B([Operation on SD])
+        C{{Configuration-dependent step}}
     end
 ....
-////
+

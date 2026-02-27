@@ -19,7 +19,7 @@ The Catalogue is not directly accessed by end usersfootnote:[Here, this term com
 
 Authentication within the Federation is realized by a dedicated component. It is not part of the Federated Catalogue. To demonstrate the integration, the Federated Catalogue offers an Authentication component, based on common, off the shelf software (see section <<_authentication>>).
 
-The Federated Catalogue offers the possibility to verify Self-Descriptions. Therefore, signatures in Self-Descriptions must be verified, which requires trust anchors.  According to the Gaia-X Trust Framework, those trust anchors are available in the Gaia-X Registry.  When submitting Self-Descriptions, the public key is downloaded. The belonging X.509 certificate is then sent to the Gaia-X registry if it has a valid trust anchor.
+The Federated Catalogue offers the possibility to verify Self-Descriptions. Signatures in Self-Descriptions are always verified cryptographically: the public key is downloaded and the signature is checked against the content.  Optionally, the Federated Catalogue can be configured to enforce Gaia-X Trust Framework validation (see <<_trust_framework_configuration>>). When enabled, the X.509 certificate belonging to the public key is additionally validated against the Gaia-X Trust Anchor Registry to ensure it has a valid trust anchor chain.  By default, this Trust Framework validation is **disabled**, allowing the catalogue to be used in ecosystems that do not require Gaia-X compliance.
 
 [#system_overview,reftext='Figure {counter:refnum}']
 .System Overview
@@ -850,6 +850,34 @@ erDiagram
     }
 
 ....
+
+[[_trust_framework_configuration]]
+==== Trust Framework Configuration
+
+The Federated Catalogue can be operated with or without Gaia-X Trust Framework validation. By default, Trust Framework validation is **disabled**, allowing the catalogue to store any valid Verifiable Credential/Presentation without requiring Gaia-X compliance.
+
+The following configuration properties control this behavior:
+
+[options="header",cols="2,1,3"]
+|===
+| Property | Default | Description
+| `federated-catalogue.verification.trust-framework.gaiax.enabled` | `false` | Enable/disable Gaia-X Trust Framework validation
+| `federated-catalogue.verification.trust-framework.gaiax.trust-anchor-url` | _(Gaia-X registry URL)_ | URL for the Gaia-X Trust Anchor Registry (only used when enabled)
+|===
+
+**When disabled (default):**
+
+* Credentials can be uploaded without Gaia-X compliance validation
+* No calls are made to the Gaia-X Trust Anchor Registry
+* Signature verification still works but does not require Gaia-X trust anchors or an `x5u` URL in the JWK
+* Any valid Verifiable Credential/Presentation can be stored
+
+**When enabled:**
+
+* Full Gaia-X Trust Framework validation is enforced
+* Credentials must have valid trust anchor chains registered with Gaia-X
+* Calls are made to the Gaia-X Trust Anchor Registry for validation
+* The `trust-anchor-url` must be configured
 
 === Level 3: Shared data structures
 
