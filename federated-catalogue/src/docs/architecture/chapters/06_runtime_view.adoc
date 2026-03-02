@@ -771,7 +771,7 @@ When calling `GET /query` a HTML page with a query input form is displayed.
 
 ==== Query the catalogue
 
-The query endpoint accepts an optional `queryLanguage` query parameter to select the query language. The default is `OPENCYPHER` (for the Neo4j backend). When the Fuseki backend is configured, use `queryLanguage=SPARQL` to issue SPARQL-star queries. Queries in a language not supported by the active backend are rejected with HTTP 422 (Unprocessable Entity), including a message that names the active backend, the supported language and the expected `Content-Type`. When the graph store is disabled (`graphstore.impl=dummy`), queries are rejected with HTTP 503 (Service Unavailable).
+The query endpoint uses the `Content-Type` header to select the query language: `application/opencypher-query` for openCypher (Neo4j backend) or `application/sparql-query` for SPARQL-star (Fuseki backend). The request body is raw query text (not a JSON wrapper). Queries in a language not supported by the active backend are rejected with HTTP 415 (Unsupported Media Type), including a message that names the active backend, the supported language and the expected `Content-Type`. When the graph store is disabled (`graphstore.impl=dummy`), queries are rejected with HTTP 503 (Service Unavailable).
 
 Only read queries are allowed. Write queries (e.g., `CREATE`/`DELETE` in openCypher, `INSERT`/`DELETE` in SPARQL) are rejected with HTTP 500.
 
@@ -783,14 +783,15 @@ sequenceDiagram
     participant API
     participant Validator as QueryLanguageValidator
     participant Graph as Graph-DB
-    User ->> + API: POST /query?queryLanguage={OPENCYPHER|SPARQL}
+    User ->> + API: POST /query (Content-Type: application/opencypher-query or application/sparql-query)
+    API ->> API: resolve language from Content-Type
     API ->> + Validator: validate(queryLanguage)
     alt graph store disabled
         Validator -->> API: GraphStoreDisabledException (503)
         API -->> User: 503 Service Unavailable
     else language not supported
-        Validator -->> API: UnsupportedQueryLanguageException (422)
-        API -->> User: 422 Unprocessable Entity
+        Validator -->> API: UnsupportedQueryLanguageException (415)
+        API -->> User: 415 Unsupported Media Type
     else language supported
         Validator -->> - API: OK
     end
