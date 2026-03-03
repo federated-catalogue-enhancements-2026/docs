@@ -845,17 +845,17 @@ sequenceDiagram
     participant VerificationService
     User ->> + API:POST /verifications/self-descriptions<br>(?verifySchema=...&verifyVPSignature=...&verifyVCSignature=...)
     API ->> + VerificationService:verifySelfDescription(sd, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
-    VerificationService --> VerificationService:[Verify Syntax]
-    opt verifySemantics (default true)
-        VerificationService --> VerificationService:[Verify Semantic]
-        VerificationService ->> VerificationService:[Extract SD Type]
+    VerificationService ->> VerificationService: [Verify Syntax]
+    opt verifySemantics [default true]
+        VerificationService ->> VerificationService: [Verify Semantic]
+        VerificationService ->> VerificationService: [Extract SD Type]
     end
-    opt verifySchema (default false)
-        VerificationService ->> SchemaValidationService:[Validate Claims vs SHACL]
-        SchemaValidationService -->> VerificationService:SemanticValidationResult
+    opt verifySchema [default false]
+        VerificationService ->> SchemaValidationService: [Validate Claims vs SHACL]
+        SchemaValidationService -->> VerificationService: SemanticValidationResult
     end
-    opt signature verification (verifyVPSig / verifyVCSig; default false)
-        VerificationService --> VerificationService:[Verify Signatures]
+    opt signature verification [verifyVPSig / verifyVCSig - default false]
+        VerificationService ->> VerificationService: [Verify Signatures]
     end
     VerificationService ->> VerificationService:[Extract Claims]
     VerificationService -->> - API:VerificationResult

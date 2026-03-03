@@ -809,7 +809,7 @@ The default profile enables **semantic validation only**. Signature verification
 [mermaid, width=2000]
 ....
 flowchart LR
-    subgraph default ["Default Profile"]
+    subgraph defaultProfile ["Default Profile"]
         direction LR
         A(Parse JSON +\nCheck syntax) --> B(Validate against\nJSON-LD Grammar)
         B --> C(Validate against VC standard)
@@ -817,7 +817,7 @@ flowchart LR
         D --> E([Extract Claims])
         E --> F([Extract Participant])
     end
-    style default fill:#e8f5e9,stroke:#4caf50
+    style defaultProfile fill:#e8f5e9,stroke:#4caf50
 ....
 
 ===== Strict profile
