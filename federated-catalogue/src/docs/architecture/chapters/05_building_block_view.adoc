@@ -86,10 +86,10 @@ The graph database backend is **pluggable**. The implementation is selected via 
 | Value | Backend | Query Language
 | `neo4j` | Neo4j (default) | openCypher
 | `fuseki` | Apache Jena Fuseki | SPARQL-star
-| `dummy` | No-op (for testing) | —
+| `none` | No-op / disabled (default when property is missing) | —
 |===
 
-Both backends implement the same `GraphStore` interface. Core services contain no backend-specific logic.
+Both backends implement the same `GraphStore` interface. Core services contain no backend-specific logic. The `none` backend is selected automatically when `graphstore.impl` is not set.
 
 ===== Neo4j backend
 
@@ -302,7 +302,11 @@ This component is used by the _Verification Service_ to extract Claims from Self
 
 ==== Graph Store
 
-The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from Self-Descriptions) and adds them to the graph database. The Graph Database only contains claims from active Self-Descriptions and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database.
+The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from Self-Descriptions) and adds them to the graph database. The Graph Database only contains claims from active Self-Descriptions and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database. Additionally, the interface provides health-check and claim-count methods used by the Spring Boot health indicator and the startup auto-rebuild mechanism.
+
+A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`).
+
+Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active Self-Descriptions into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
 
 [source,java]
 ----
@@ -353,6 +357,24 @@ public interface GraphStore {
      */
     default GraphBackendType getBackendType() {
         return GraphBackendType.NONE;
+    }
+
+    /**
+     * Checks whether the graph store backend is reachable and operational.
+     *
+     * @return true if the backend is healthy, false otherwise
+     */
+    default boolean isHealthy() {
+        return true;
+    }
+
+    /**
+     * Returns the number of claim entries currently stored in the graph database.
+     *
+     * @return the claim count, or 0 if the store is empty or disabled
+     */
+    default long getClaimCount() {
+        return 0;
     }
 
 }
