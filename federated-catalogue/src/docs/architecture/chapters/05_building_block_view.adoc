@@ -301,6 +301,8 @@ The Graph Store is the interface for interacting with the Graph Database. It rec
 
 A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`).
 
+Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active Self-Descriptions into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
+
 [source,java]
 ----
 /**
