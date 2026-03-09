@@ -15,6 +15,8 @@ This chapter first defines a generic workflow for write operations (<<_generic_c
 
 === Generic Control Flow for write operations
 
+The write flow branches depending on whether the uploaded content is RDF or non-RDF. RDF content goes through the full verification pipeline and is indexed in the graph database. Non-RDF content bypasses verification and graph storage entirely.
+
 [mermaid, width=2000]
 ....
 sequenceDiagram
@@ -22,17 +24,27 @@ sequenceDiagram
     actor User
     participant Auth as Auth*
     participant API
+    participant RdfDetector
     participant Verification
     participant SDStore as SD-Storage
     participant GraphDB as Graph-Database
     User ->> + Auth:Authenticate
     Auth -->> - User:OK
-    User ->> + API:OK
-    API ->> + Verification:Verify
-    Verification -->> - API:OK
-    API ->> + SDStore:Store
-    SDStore -->> + GraphDB:Update
-    SDStore -->> - API:OK
+    User ->> + API:Upload content
+    API ->> + RdfDetector:isRdf(contentType, content)
+    RdfDetector -->> - API:true / false
+    alt RDF content
+        API ->> + Verification:Verify
+        Verification -->> - API:OK
+        API ->> + SDStore:storeSelfDescription
+        SDStore ->> + GraphDB:addClaims
+        GraphDB -->> - SDStore:OK
+        SDStore -->> - API:OK
+    else Non-RDF content
+        API ->> + SDStore:storeAsset
+        Note right of SDStore: No verification, no graph
+        SDStore -->> - API:OK
+    end
     API -->> - User:OK
 ....
 
@@ -594,6 +606,43 @@ sequenceDiagram
 ....
 
 
+==== Adding a Non-RDF Asset
+
+Non-RDF assets (PDFs, plain JSON, YAML, images, binary files) are uploaded through the same `POST /self-descriptions` endpoint using `multipart/form-data` or `application/octet-stream`. The `RdfDetector` classifies the content; non-RDF assets bypass verification and graph storage entirely.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API as AssetUploadController
+    participant Service as AssetUploadService
+    participant RdfDetector
+    participant SDStore as SD-Storage
+    participant FileStore as Asset FileStore
+    
+    User ->> + API:POST /self-descriptions (multipart/form-data or application/octet-stream)
+    API ->> + Service:processUpload(bytes, contentType, filename)
+    Service ->> + RdfDetector:isRdf(contentType, bytes)
+    RdfDetector -->> - Service:false
+    Service ->> Service:computeSHA256(bytes)
+    Service ->> Service:buildMetadata(hash, contentType, fileSize, participantId)
+    Service ->> + SDStore:storeAsset(metadata, filename)
+    SDStore ->> SDStore:generateSubjectId(prefix + hash)
+    SDStore ->> SDStore:insertMetadata(PostgreSQL)
+    SDStore ->> + FileStore:storeFile(hash, contentAccessor)
+    FileStore -->> - SDStore:OK
+    SDStore -->> - Service:storedMetadata
+    Service -->> - API:SelfDescriptionMetadata
+    API -->> - User:201 Created (metadata with contentType, fileSize, id)
+....
+
+**Step 5-6:** `RdfDetector` checks the MIME type against the configured allowlist and, for `application/json`, inspects content for a JSON-LD `@context` pattern.
+
+**Step 9:** `storeAsset` generates a content-addressable identifier (`urn:asset:sha256:<hash>`) if no subject ID is provided. If an asset with the same hash already exists, HTTP 409 (Conflict) is returned.
+
+**Step 11:** The raw bytes are written to the `assetFileStore`, not the schema/context File Store.
+
 ==== Updating a Self-Description for an Offering
 
 There is no direct way to update a Self-Description. Updates can happen by submitting a new Self-Description, referring to the same credentialSubject. The old Self-Description for the same credentialSubject will be depricated.
@@ -893,6 +942,29 @@ sequenceDiagram
         SDStore ->> GraphDB:addClaims(Claims, credentialSubject)
         SDStore -->> - Service: [Ok, if no exception]
 ....
+
+==== Store Non-RDF Assets to the Self-Description store
+
+This sequence diagram shows the flow when storing a non-RDF asset. Unlike Self-Descriptions, assets skip graph database interaction entirely. The content is stored in the asset File Store and metadata (including content type, file size, and original filename) is stored in the Metadata Store.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    participant Service
+    participant SDStore as SD-Storage
+    participant MetaData as MetaData Store
+    participant FileStore as Asset File Store
+    Service ->> + SDStore: storeAsset(metadata, filename)
+    SDStore ->> SDStore: generateSubjectId(prefix + hash)
+    SDStore ->> + MetaData: insertMetadata(hash, subjectId,<br>contentType, fileSize, filename)
+    MetaData -->> - SDStore: OK
+    SDStore ->> + FileStore: storeFile(hash, contentAccessor)
+    FileStore -->> - SDStore: OK
+    SDStore -->> - Service: storedMetadata
+....
+
+NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the metadata filter endpoints.
 
 ==== Periodic Validation of Signatures
 This sequence diagram shows the detailed flow, when checking the expiration date of the signatures of all Self-Descriptions.  This sequence is to be periodically triggered.

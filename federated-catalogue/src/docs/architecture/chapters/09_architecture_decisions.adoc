@@ -51,3 +51,22 @@ This makes signature verification without trust anchor enforcement ineffective a
 
 This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that provide no security value without the trust framework should not be forced by default. Production deployments must explicitly enable signatures together with the trust framework.
 
+=== ADR 4: Non-RDF Asset Storage Strategy
+
+**Context:** The catalogue needs to support non-RDF assets (PDFs, plain JSON, YAML, images, binary files) alongside RDF Self-Descriptions. Several approaches were considered:
+
+1. **Separate `/assets` endpoint and storage:** New endpoint, new database table, new service layer. Clean separation but duplicates lifecycle management, filtering, and metadata handling.
+2. **Unified endpoint with dual-path routing:** Extend the existing `POST /self-descriptions` endpoint to accept non-RDF content. Reuse the `sdfiles` table (extended with asset metadata columns), the `SelfDescriptionStore` interface, and the existing filter/lifecycle infrastructure. Route to verification or direct storage based on content-type detection.
+3. **External object storage (S3/MinIO):** Delegate non-RDF storage to an external system. Adds infrastructure complexity and a new dependency.
+
+**Decision:** Option 2 — unified endpoint with dual-path routing.
+
+* The `POST /self-descriptions` endpoint accepts `multipart/form-data` and `application/octet-stream` in addition to `application/json` and `application/ld+json`.
+* An `RdfDetector` classifies uploads by content type (configurable allowlist) and content inspection (JSON-LD `@context` pattern).
+* RDF content follows the existing verification + graph storage path.
+* Non-RDF content bypasses verification and graph storage entirely. It is stored in a dedicated `assetFileStore` (separate directory from schema/context caches) with metadata in the `sdfiles` table.
+* Three columns are added to `sdfiles`: `content_type` (VARCHAR), `file_size` (BIGINT), `original_filename` (VARCHAR). The `content` column is made nullable (non-RDF assets store content only in the File Store).
+* Non-RDF assets receive auto-generated identifiers: `urn:asset:sha256:<content-hash>`.
+
+**Rationale:** Reusing the existing endpoint and metadata infrastructure avoids duplication of lifecycle management, filtering, pagination, and access control. The `RdfDetector` allowlist gives operators explicit control over which content types trigger verification. Separate File Store instances keep asset blobs isolated from schema caches for operational clarity.
+

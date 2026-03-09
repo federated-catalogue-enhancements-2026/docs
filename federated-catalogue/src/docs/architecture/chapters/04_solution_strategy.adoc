@@ -31,6 +31,31 @@ This limitation to one subject per Self-Description means that, if a valid Self-
 
 As a consequence, the current implementation of the Federated Catalogue ignores the IDs of the Verifiable Presentations / Verifiable Credentials themselves; however, future implementations may use them.
 
+=== Non-RDF Assets
+
+==== Motivation
+
+The catalogue was originally designed to store only RDF-based Self-Descriptions (Verifiable Credentials in JSON-LD format). However, many catalogue use cases require storing non-RDF content alongside Self-Descriptions: contract templates (JSON, XML, YAML), human-readable documents (PDF), images, configuration files, or other binary data.
+
+To support these use cases, the catalogue extends the existing `POST /self-descriptions` endpoint to accept non-RDF content types. The upload path is determined automatically based on the content type and content inspection.
+
+==== Dual-Path Upload Routing
+
+When content is submitted, an `RdfDetector` component classifies it as either RDF or non-RDF:
+
+* **RDF content** (e.g., `application/ld+json`, or `application/json` with an `@context` key) follows the existing verification pipeline: syntax check, semantic validation, claim extraction, graph storage.
+* **Non-RDF content** (e.g., `application/pdf`, `text/plain`, `application/octet-stream`, plain JSON without `@context`) bypasses verification entirely and is stored directly in the File Store with metadata in the Metadata Store. No claims are extracted and no graph database interaction occurs.
+
+The set of MIME types treated as RDF is configurable via `federated-catalogue.rdf.content-types`. Operators can adjust this allowlist to match their deployment's verification capabilities.
+
+==== Identification of Non-RDF Assets
+
+Non-RDF assets do not have a `credentialSubject`. Instead, they receive an auto-generated identifier based on their content hash: `urn:asset:sha256:<hash>`. The prefix is configurable via `federated-catalogue.asset.subject-id-prefix`. This ensures stable, content-addressable identifiers and built-in deduplication — uploading the same content twice results in a conflict (HTTP 409).
+
+==== Storage Strategy
+
+Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), separate from the schema and context caches. Asset metadata (content type, file size, original filename) is stored in the existing `sdfiles` table with three additional columns. The `content` column is nullable — for non-RDF assets, the raw bytes live only in the File Store, not in the database.
+
 === Schema
 
 ==== Schema Types
