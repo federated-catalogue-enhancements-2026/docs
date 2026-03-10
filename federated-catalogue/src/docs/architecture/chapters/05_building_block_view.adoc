@@ -279,14 +279,85 @@ classDiagram
         +setBaseClassUri(baseClass, uri) void
     }
     class CredentialVerificationStrategy {
-        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
+        -filter: ProtectedNamespaceFilter
         +extractClaims(payload) List~SdClaim~
+        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
     }
     VerificationServiceImpl --> VerificationStrategy : delegates to
     VerificationStrategy <|.. CredentialVerificationStrategy
+    CredentialVerificationStrategy --> ProtectedNamespaceFilter : filters via
 ....
 
 `VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety. The `resolveStrategy(ContentAccessor)` method currently always resolves to `CredentialVerificationStrategy`.
+
+`CredentialVerificationStrategy` implements all verification and claim extraction logic. In `verifySelfDescription()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the `VerificationResult`. The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+
+[[_protected_namespace_filter]]
+===== Protected Namespace Filter
+
+The `ProtectedNamespaceFilter` prevents external actors from injecting triples that use the catalogue's reserved internal metadata namespace. Any such triples present in externally submitted self-descriptions or schemas are silently removed before storage or further processing.
+
+The protected namespace is:
+
+[options="header",cols="1,2"]
+|===
+| Prefix | Namespace URI
+| `fcmeta:` | `https://projects.eclipse.org/projects/technology.xfsc/federated-catalogue/meta#`
+|===
+
+This namespace is reserved for internal catalogue use only — for example, to record compliance results and validation timestamps written by internal services. External documents submitted via the API are not permitted to set values in this namespace.
+
+The filter is applied at three ingestion boundaries:
+
+[options="header",cols="2,3"]
+|===
+| Boundary | Integration point
+| Self-Description upload and claim extraction | `CredentialVerificationStrategy.verifySelfDescription()` — explicitly calls `filterClaims()` after claim extraction; propagates filter warnings to `VerificationResult.warnings`.
+| Schema import and update (`POST /schemas`, `PUT /schemas/{id}`) | `SchemaStoreImpl.analyzeSchema()` — calls `filterModel()` on the parsed Jena RDF model before schema analysis proceeds; propagates filter warnings to `SchemaResult.warnings` in the API response.
+| Graph rebuild (`POST /actuator/graph-rebuild`) | `GraphRebuilder.addSdToGraph()` — explicitly calls `filterClaims()` after re-extracting claims from stored self-descriptions, ensuring the rebuilt graph is clean.
+|===
+
+[mermaid, width=2000]
+....
+classDiagram
+    class ProtectedNamespaceFilter {
+        +filterClaims(claims, source) FilteredClaims
+        +filterModel(model, source) FilteredModel
+    }
+    class FilteredClaims {
+        +claims() List~SdClaim~
+        +warning() String
+        +hasWarning() boolean
+    }
+    class FilteredModel {
+        +model() Model
+        +warning() String
+        +hasWarning() boolean
+    }
+    class ProtectedNamespaceProperties {
+        +getNamespace() String
+        +getPrefix() String
+    }
+    ProtectedNamespaceFilter --> ProtectedNamespaceProperties : reads namespace from
+    ProtectedNamespaceFilter ..> FilteredClaims : returns
+    ProtectedNamespaceFilter ..> FilteredModel : returns
+....
+
+Configuration:
+
+[options="header",cols="2,2,3"]
+|===
+| Property | Default | Description
+| `federated-catalogue.verification.protected-namespace.namespace` | `https://projects.eclipse.org/projects/technology.xfsc/federated-catalogue/meta#` | Namespace URI to protect. Normalized on startup: whitespace trimmed; `#` appended if the URI ends with neither `#` nor `/`.
+| `federated-catalogue.verification.protected-namespace.prefix` | `fcmeta` | Short prefix used in log output when reporting filtered triples.
+|===
+
+[NOTE]
+====
+Filtering is unconditional. There is no configuration toggle to disable it. The namespace URI is configurable to support custom deployments, but the filter itself is always active.
+
+Internal services bypass the filter by writing directly to `GraphStore.addClaims()`, which does not pass through the verification pipeline.
+====
 
 [#_upload_schema_validation_configuration]
 ===== Schema Validation Configuration
@@ -336,6 +407,8 @@ Semantic revalidation is not needed here. Schema revalidation against SHACL shap
 ===== Claim Extractor
 
 This component is used by the _Verification Service_ to extract Claims from Self-Descriptions. Those claims are returned by the _Verification Service_ in the _Verification Result_.
+
+Claims pass through the `ProtectedNamespaceFilter` before being returned (see <<_protected_namespace_filter>>). Triples referencing the internal `fcmeta:` namespace are removed at this stage, so the graph store never receives externally injected internal metadata. If any triples are filtered, a user-visible warning is included in the API response.
 
 ==== Graph Store
 
@@ -656,7 +729,7 @@ NOTE: The `content` column is nullable. For RDF Self-Descriptions, it stores the
 
 The Schema Management Store is responsible for storing schema files and their metadata. It also supports the verification of schemas, as well as the possibility to generate the composite schema (union of all schemas).
 
-When submitting (add, replace) a schema, the following verification steps will happen:
+When submitting (add, replace) a schema, triples using the protected `fcmeta:` namespace are first removed from the parsed RDF model by `ProtectedNamespaceFilter` (see <<_protected_namespace_filter>>). The remaining model then proceeds through the following verification steps:
 
 * For ontologies:
     ** Check that ontology IRI is present and valid (`SD-Sch-NF-01`)
@@ -691,8 +764,9 @@ public interface SchemaStore {
    * Initialise the default Gaia-X schemas, if the schema store is still empty.
    * If there are already schemas in the store, calling this method will do
    * nothing.
+   * @return number of schemas added to Schema DB.
    */
-  public void initializeDefaultSchemas();
+  public int initializeDefaultSchemas();
 
   /**
    * Verify if a given schema is syntactically correct.
@@ -708,17 +782,18 @@ public interface SchemaStore {
    * syntax.
    *
    * @param schema The schema content to be stored.
-   * @return The internal identifier of the Schema.
+   * @return The result containing the internal identifier and any warnings.
    */
-  String addSchema(ContentAccessor schema);
+  SchemaStoreResult addSchema(ContentAccessor schema);
 
   /**
    * Update the schema with the given identifier.
    *
    * @param identifier The identifier of the schema to update.
    * @param schema The content to replace the schema with.
+   * @return The result containing the identifier and any warnings.
    */
-  void updateSchema(String identifier, ContentAccessor schema);
+  SchemaStoreResult updateSchema(String identifier, ContentAccessor schema);
 
   /**
    * Delete the schema with the given identifier.

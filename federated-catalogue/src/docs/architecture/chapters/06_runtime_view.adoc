@@ -771,21 +771,29 @@ sequenceDiagram
 [mermaid, width=2000]
 ....
 sequenceDiagram
+    autonumber
     actor User
     participant Auth as Auth*
-    participant API
-    participant SchemaStore
+    participant API as SchemasService
+    participant SchemaStore as SchemaStoreImpl
+    participant Filter as ProtectedNamespaceFilter
     User ->> + Auth:Authorize(SCHEMA_CREATE | ADMIN_ALL)
     Auth -->> - User:OK
     User ->> + API:POST /schemas
     API ->> + SchemaStore:addSchema(schemaFile)
-    SchemaStore ->> SchemaStore:Analyse Type
-    SchemaStore ->> SchemaStore:Extract or Generate ID
-    SchemaStore ->> SchemaStore:Extract defined URLs
-    SchemaStore ->> SchemaStore:Check Duplicate URLs
-    SchemaStore ->> SchemaStore:Store Schema
-    SchemaStore -->> - API:SchemaID
-    API -->> - User:SchemaID
+    SchemaStore ->> SchemaStore:[Parse RDF — JSON-LD / RDF-XML / TTL]
+    SchemaStore ->> + Filter:filterModel(model, "schema import")
+    Filter -->> - SchemaStore:FilteredModel {model, warning}
+    Note right of Filter: Triples using fcmeta: namespace<br/>are removed; warning captured
+    SchemaStore ->> SchemaStore:[Detect Schema Type — SHAPE / ONTOLOGY / VOCABULARY]
+    SchemaStore ->> SchemaStore:[Extract or Generate ID]
+    SchemaStore ->> SchemaStore:[Extract defined URLs]
+    SchemaStore ->> SchemaStore:[Check Duplicate URLs]
+    SchemaStore ->> SchemaStore:[Store Schema in DB]
+    SchemaStore -->> - API:SchemaStoreResult {id, warning}
+    API ->> API:[Convert to SchemaResult {id, warnings}]
+    Note right of API: Server layer maps core result<br/>to generated API model
+    API -->> - User:SchemaResult {id, warnings}
 ....
 
 
@@ -794,25 +802,32 @@ sequenceDiagram
 [mermaid, width=2000]
 ....
 sequenceDiagram
+    autonumber
     actor User
-    participant API
     participant Auth as Auth*
-    participant SchemaStore
+    participant API as SchemasService
+    participant SchemaStore as SchemaStoreImpl
+    participant Filter as ProtectedNamespaceFilter
     participant Verification as VerificationService
     participant Revalidation as RevalidationService
     User ->> + API:PUT /schemas/{ID}
     API ->> + Auth:Authorize(SCHEMA_UPDATE | ADMIN_ALL)
     Auth -->> - API:OK
     API ->> + SchemaStore:updateSchema(ID, schema)
-    SchemaStore ->> SchemaStore:Extract type, ID, URLs
-    SchemaStore ->> SchemaStore:Verify ID == ID
-    SchemaStore ->> SchemaStore:Verify type == old.type
-    SchemaStore ->> SchemaStore:Remove old schema
-    SchemaStore ->> SchemaStore:Check Duplicate URLs
-    SchemaStore ->> SchemaStore:Store Schema
+    SchemaStore ->> SchemaStore:[Parse RDF — JSON-LD / RDF-XML / TTL]
+    SchemaStore ->> + Filter:filterModel(model, "schema import")
+    Filter -->> - SchemaStore:FilteredModel {model, warning}
+    Note right of Filter: Triples using fcmeta: namespace<br/>are removed; warning captured
+    SchemaStore ->> SchemaStore:[Detect Schema Type — SHAPE / ONTOLOGY / VOCABULARY]
+    SchemaStore ->> SchemaStore:[Extract or Generate ID]
+    SchemaStore ->> SchemaStore:[Verify ID matches existing schema ID]
+    SchemaStore ->> SchemaStore:[Extract defined URLs]
+    SchemaStore ->> SchemaStore:[Check Duplicate URLs]
+    SchemaStore ->> SchemaStore:[Update Schema in DB]
     activate Revalidation
-    SchemaStore -->> -API:OK
-    API -->> - User:OK
+    SchemaStore -->> - API:SchemaStoreResult {id, warning}
+    API ->> API:[Convert to SchemaResult {id, warnings}]
+    API -->> - User:SchemaResult {id, warnings}
     loop For Each SD
         Revalidation ->> + Verification:Validate SDs
         Verification -->> - Revalidation:Result
@@ -830,15 +845,17 @@ When deleting a schema Self-Descriptions do not need to be re-verified, since a 
 [mermaid, width=2000]
 ....
 sequenceDiagram
+    autonumber
     actor User
-    participant API
     participant Auth as Auth*
-    participant SchemaStore as SchemaStore
+    participant API as SchemasService
+    participant SchemaStore as SchemaStoreImpl
     User ->> + API:DELETE /schemas/{schemaId}
     API ->> + Auth:Authorize(SCHEMA_DELETE | ADMIN_ALL)
     Auth -->> - API:OK
     API ->> + SchemaStore:deleteSchema(schemaId)
-    SchemaStore ->> SchemaStore:Remove schema
+    SchemaStore ->> SchemaStore:[Remove schema from DB]
+    SchemaStore ->> SchemaStore:[Invalidate composite schema cache]
     SchemaStore -->> - API:OK
     API -->> - User:OK
 ....
@@ -937,8 +954,10 @@ sequenceDiagram
         VerificationService ->> VerificationService: [Verify Signatures]
     end
     VerificationService ->> VerificationService:[Extract Claims]
-    VerificationService -->> - API:VerificationResult
-    API -->> -User: VerificationResult
+    VerificationService ->> VerificationService:[Filter Protected Namespace (fcmeta:)]
+    Note right of VerificationService: Filtered triples produce<br/>warnings in VerificationResult
+    VerificationService -->> - API:VerificationResult (incl. warnings)
+    API -->> -User: VerificationResult (incl. warnings)
 ....
 
 === Detailed sub-scenarios
@@ -1026,6 +1045,7 @@ sequenceDiagram
 The verification of SDs consists of up to four stages, each independently configurable (see <<_verification_profiles>>).
 Besides verifying the SD, additional tasks are executed (e.g., parsing, claim extraction).
 
+`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `VerificationResult`. See <<_verification_strategy_pattern>> for details.
 **Syntactic validation** is always active. The SD is parsed as JSON-LD and validated against the Verifiable Credential data model. Any syntactic issue will raise an error here.
 
 **Semantic verification** validates the credential subject `@type` against the loaded ontologies. This is active by default and catches type mismatches early.
@@ -1100,7 +1120,13 @@ flowchart LR
     one --> two
     two --> three
     three --> four
-    subgraph five [Legend]
+    four --> five
+    subgraph five [Claim Extraction]
+        direction TB
+        fiveA([Extract Claims from VP])
+        fiveA --> fiveB(Filter protected namespace<br>via ProtectedNamespaceFilter)
+    end
+    subgraph six [Legend]
         direction TB
         A(Throws an error if check fails)
         B([Operation on SD])
