@@ -15,8 +15,8 @@ ifndef::imagesdir[:imagesdir: ../../images]
 |===
 |Term |Definition
 
-|Self-Description (SD)
-|A Self-Description expresses characteristics of a Resource, Service Offering or Participant and describes properties and Claims which are linked to the Identifier. It is a Verifiable Presentation.
+|Credential (formerly Self-Description / SD)
+|A credential is a Verifiable Presentation (VP) or standalone Verifiable Credential (VC) that expresses characteristics of a Resource, Service Offering or Participant and describes properties and Claims which are linked to the Identifier. The catalogue accepts both forms; in strict/Gaia-X mode a VP wrapper is required. In the Gaia-X v2 specification (ICAM v24.07), this concept replaces what was previously called a "Self-Description". At the catalogue's API and storage level, credentials are managed as **Assets** (see CAT-NFR-01).
 
 |Verifiable Presentation (VP)
 |A verifiable presentation expresses data from one or more verifiable credentials, and is packaged in such a way that the authorship of the data is verifiable. 
@@ -45,7 +45,10 @@ ifndef::imagesdir[:imagesdir: ../../images]
 |DID Document
 |The DID presented in an VC or proof links to an DID-Document. The DID-Document is a description of an identity. It is stored dezentralized by the owner. The DID-Document provides cryptographic information that can be used to verify any document. Thereby, it can be ensured that the document is trusted.
 
+|Asset
+|Generic term for any content stored in the catalogue — including RDF-based credentials and non-RDF content (PDFs, JSON, YAML, images). At the API level, the unified `/assets` endpoint handles both types. See ADR 4.
+
 |id/credentialSubject of an Entity
-|Unique identifier for entities stored in the catalogue. It must be present as an attribute in the claims of a Self-Description
+|Unique identifier for entities stored in the catalogue. It must be present as an attribute in the claims of a credential
 
 |===

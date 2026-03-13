@@ -42,12 +42,12 @@ Quality goals regarding, e.g., performance, safety, security, and standards conf
 
 === Assumptions
 
-Since this project is conducted in an early stage of the Gaia-X development there is no experience how Self-Descriptions will look like in practice. Therefore, several assumptions regarding the characteristics of Self-Descriptions have to be made. These assumptions will be explained in this section.
+Since this project is conducted in an early stage of the Gaia-X development there is no experience how credentials (formerly called Self-Descriptions) will look like in practice. Therefore, several assumptions regarding their characteristics have to be made. These assumptions will be explained in this section.
 
-* Self-Descriptions usually contain 20 to 50 claims. Bigger Self-Descriptions rarely exist. Usually, the more complex Self-Descriptions are built by a set of complementing Verifiable Credentials.
-* Most claims affecting a service offering or a participant are provided by the provider/participant itself. These claims are self-signed. However, this is no issue because these claims are not critical for trust, compliance, etc. – mere technical information. A small set of the claims (approx. 5-10) are signed by other issues providing trust-relevant information.
-* Most claims are flat triples containing the service or the participant as the subject. However, claims can consist of blank notes to represent more complex expressions. 
+* Credentials usually contain 20 to 50 claims. Bigger credentials rarely exist. Usually, the more complex ones are built by a set of complementing Verifiable Credentials.
+* Most claims affecting a service offering or a participant are provided by the provider/participant itself. These claims are self-signed. However, this is no issue because these claims are not critical for trust, compliance, etc. – mere technical information. A small set of the claims (approx. 5-10) are signed by other issuers providing trust-relevant information.
+* Most claims are flat triples containing the service or the participant as the subject. However, claims can consist of blank nodes to represent more complex expressions.
 * The claims are based on the central Gaia-X ontology, which defines approximately 15 key classes which are used frequently. Further, these key classes are extended both classes for use in special situations. The ontology will be extended by a centrally defined vocabulary. Additionally, a federation might add similar-sized ontology and vocabulary for the domain-specific use cases.
 * Besides that, there are some properties of the central Gaia-X classes that have explicit cardinality constraints (other than default zero to infinity). Consideration might define further cardinality constraints to meet domain requirements.
-* The Self-Description of a service or participant is likely to be updated multiple times a day to every few months. In big federations, this might lead to updates of Self-Descriptions every minute. Besides that, new ontology, shapes, and vocabulary might come every few months – updates might be more frequent (once a day).
+* The credential for a service or participant is likely to be updated multiple times a day to every few months. In big federations, this might lead to updates of credentials every minute. Besides that, new ontology, shapes, and vocabulary might come every few months – updates might be more frequent (once a day).
 * The federation-specific features like specific classes might not be used by all federations. they stick to the central Gaia-X classes.

@@ -11,23 +11,25 @@ ifndef::imagesdir[:imagesdir: ../../images]
 [[section-solution-strategy]]
 == Solution Strategy
 
-This chapter describes some basic concepts and details, when handling Self-Descriptions and Schemas. They are needed to understand the details
+This chapter describes some basic concepts and details, when handling credentials and Schemas. They are needed to understand the details.
 
-=== Self-Descriptions
+=== Credentials
 
-==== Granularity of Self-Descriptions
+NOTE: In the Gaia-X v2 specification (ICAM v24.07), what was previously called "Self-Description" is now called a **Credential** — a Verifiable Presentation (VP) containing one or more Verifiable Credentials (VCs), or a standalone VC, that describes a Gaia-X entity. The catalogue accepts both forms (controlled by the `requireVP` flag in strict mode). At the catalogue's API and storage level, the generic term **Asset** is used (see CAT-NFR-01). This section uses "credential" to describe the domain concept.
 
-According to the Gaia-X Architecture Documentfootnote:[https://gaia-x.gitlab.io/technical-committee/architecture-document//self-description/[Gaia-X Architecture Document / Self-Description Definition]],Self-Descriptions describe entities from the Gaia-X Conceptual Modelfootnote:[https://gaia-x.gitlab.io/technical-committee/architecture-document//conceptual_model/[Gaia-X Architecture Document / Conceptual Model]].  In its 22.04 version, on which the architecture of the first version of the Federated Catalogue is based, these were __Participant__ and __Service Offering__.
+==== Granularity of Credentials
 
-The Federated Catalogue does not support Self-Descriptions of __Resource__s in a free-floating way, i.e., directly submitted to the Catalogue rather than embedded into the Self-Description of a __Service Offering__.  This is because in Gaia-X, __Resources__ (e.g., data, software, hardware), are not provided directly for consumption, but composed into __Service Offerings__.  In a similar way, structured objects such as the postal address of a __Participant__ do not occur stand-alone, but only within a __Participant__ Self-Description.
+According to the Gaia-X Architecture Documentfootnote:[https://gaia-x.gitlab.io/technical-committee/architecture-document//self-description/[Gaia-X Architecture Document / Self-Description Definition]], credentials (formerly Self-Descriptions) describe entities from the Gaia-X Conceptual Modelfootnote:[https://gaia-x.gitlab.io/technical-committee/architecture-document//conceptual_model/[Gaia-X Architecture Document / Conceptual Model]].  In its 22.04 version, on which the architecture of the first version of the Federated Catalogue is based, these were __Participant__ and __Service Offering__.
 
-Acknowledging the extensibility of schemas, the Federated Catalogue accepts not only Self-Descriptions of immediate instances of the __Participant__ and __Service Offering__ classes, but also of instances of classes that a schema defines to be their subclasses.
+The Federated Catalogue does not support credentials for __Resource__s in a free-floating way, i.e., directly submitted to the Catalogue rather than embedded into the credential of a __Service Offering__.  This is because in Gaia-X, __Resources__ (e.g., data, software, hardware), are not provided directly for consumption, but composed into __Service Offerings__.  In a similar way, structured objects such as the postal address of a __Participant__ do not occur stand-alone, but only within a __Participant__ credential.
 
-==== Identification of Self-Descriptions
+Acknowledging the extensibility of schemas, the Federated Catalogue accepts not only credentials for immediate instances of the __Participant__ and __Service Offering__ classes, but also for instances of classes that a schema defines to be their subclasses.
 
-Self-Descriptions are Verifiable Presentations according to the Verifiable Credentials Data Modelfootnote:[https://www.w3.org/TR/vc-data-model/[Verifiable Credentials Data Model v1.1. W3C Recommendation 03 March 2022]. Further details on how to use this data model in Gaia-X are specified in the Identity, Credential and Access Management Document (https://gaia-x.gitlab.io/technical-committee/federation-services/icam/credential_format/[GXFSv2 - Identity and Access Management / Credential format]).].  Thus, they are immutable and especially they are protected by cryptographic signatures. Therefore, a Self-Description cannot simply be updated. To change the definition of some entity described by a Self-Description, e.g., of a Service Offering, the Self-Description must be replaced by a new one. Therefore, any such entity needs a unique identifier. There can be only one __active__ Self-Description (in other words, a set of claims) per identifier. For our design of the Federated Catalogue, we consider the __credentialSubject__ the  unique identifier of a Description. That is, we assume that, in case one Self-Description, i.e., one Verifiable Presentation, contains multiple Verifiable Credetials, all of them state claims about the same subject.footnote:[Version 22.10 of the Gaia-X Identity, Credential and Access Management Document (https://gaia-x.gitlab.io/technical-committee/federation-services/icam/credential_format/[GXFSv2 - Identity and Access Management / Credential format]) leaves this open and thus also allow Verifiable Presentations to contain Verifiable Credentials talking about multiple different subjects. We do not explicitly contradict this point but require that such Self-Descriptions shall not be used __for the purpose of listing Participants and their Service Offerings in a Catalogue__, i.e., that any such Self-Descriptions shall be split into multiple separate ones per subject in a pre-processing step before submission to a Catalogue.]
+==== Identification of Credentials
 
-This limitation to one subject per Self-Description means that, if a valid Self-Description is submitted to the Catalogue, it will invalidate all claims of the currently active Self-Description with the same __credentialSubject__. To identify any SD in the Catalogue, the `id` of the VC within the SD can be used. To track the (maybe invalidated) SDs affecting one Service or Participant, their ID and the __credentialSubject__ can be used.
+Credentials are Verifiable Presentations (or standalone Verifiable Credentials) according to the Verifiable Credentials Data Modelfootnote:[https://www.w3.org/TR/vc-data-model/[Verifiable Credentials Data Model v1.1. W3C Recommendation 03 March 2022]. Further details on how to use this data model in Gaia-X are specified in the Identity, Credential and Access Management Document (https://gaia-x.gitlab.io/technical-committee/federation-services/icam/credential_format/[GXFSv2 - Identity and Access Management / Credential format]).].  Thus, they are immutable and especially they are protected by cryptographic signatures. Therefore, a credential cannot simply be updated. To change the definition of some entity described by a credential, e.g., of a Service Offering, the credential must be replaced by a new one. Therefore, any such entity needs a unique identifier. There can be only one __active__ credential (in other words, a set of claims) per identifier. For our design of the Federated Catalogue, we consider the __credentialSubject__ the unique identifier. That is, we assume that, in case one credential, i.e., one Verifiable Presentation, contains multiple Verifiable Credentials, all of them state claims about the same subject.footnote:[Version 22.10 of the Gaia-X Identity, Credential and Access Management Document (https://gaia-x.gitlab.io/technical-committee/federation-services/icam/credential_format/[GXFSv2 - Identity and Access Management / Credential format]) leaves this open and thus also allows Verifiable Presentations to contain Verifiable Credentials talking about multiple different subjects. We do not explicitly contradict this point but require that such credentials shall not be used __for the purpose of listing Participants and their Service Offerings in a Catalogue__, i.e., that any such credentials shall be split into multiple separate ones per subject in a pre-processing step before submission to a Catalogue.]
+
+This limitation to one subject per credential means that, if a valid credential is submitted to the Catalogue, it will invalidate all claims of the currently active credential with the same __credentialSubject__. To identify any credential in the Catalogue, the `id` of the VC within the credential can be used. To track the (maybe invalidated) credentials affecting one Service or Participant, their ID and the __credentialSubject__ can be used.
 
 As a consequence, the current implementation of the Federated Catalogue ignores the IDs of the Verifiable Presentations / Verifiable Credentials themselves; however, future implementations may use them.
 
@@ -35,9 +37,9 @@ As a consequence, the current implementation of the Federated Catalogue ignores 
 
 ==== Motivation
 
-The catalogue was originally designed to store only RDF-based Self-Descriptions (Verifiable Credentials in JSON-LD format). However, many catalogue use cases require storing non-RDF content alongside Self-Descriptions: contract templates (JSON, XML, YAML), human-readable documents (PDF), images, configuration files, or other binary data.
+The catalogue was originally designed to store only RDF-based credentials (Verifiable Credentials in JSON-LD format). However, many catalogue use cases require storing non-RDF content alongside credentials: contract templates (JSON, XML, YAML), human-readable documents (PDF), images, configuration files, or other binary data.
 
-To support these use cases, the catalogue extends the existing `POST /self-descriptions` endpoint to accept non-RDF content types. The upload path is determined automatically based on the content type and content inspection.
+To support these use cases, the catalogue extends the existing `POST /assets` endpoint to accept non-RDF content types. The upload path is determined automatically based on the content type and content inspection.
 
 ==== Dual-Path Upload Routing
 
@@ -54,7 +56,44 @@ Non-RDF assets do not have a `credentialSubject`. Instead, they receive an auto-
 
 ==== Storage Strategy
 
-Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), separate from the schema and context caches. Asset metadata (content type, file size, original filename) is stored in the existing `sdfiles` table with three additional columns. The `content` column is nullable — for non-RDF assets, the raw bytes live only in the File Store, not in the database.
+Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), separate from the schema and context caches. Asset metadata (content type, file size, original filename) is stored in the `assets` table (renamed from `sdfiles` by CAT-NFR-01) with three additional columns. The `content` column is nullable — for non-RDF assets, the raw bytes live only in the File Store, not in the database.
+
+=== Asset Taxonomy and Claim Naming
+
+The catalogue organises content into a type hierarchy that determines how each asset is processed:
+
+[mermaid]
+....
+classDiagram
+    class Asset
+    class NonRDFAsset
+    class RDFAsset
+    class Credential
+    class NonCredential
+    class Claim {
+        &lt;&lt;concept&gt;&gt;
+    }
+
+    Asset <|-- RDFAsset : extends
+    Asset <|-- NonRDFAsset : extends
+    RDFAsset <|-- Credential : extends
+    RDFAsset <|-- NonCredential : extends
+    Credential ..> Claim : contains
+    NonCredential ..> Claim : contains
+
+    note for Claim "A Claim is the atomic unit\nof semantic assertion (Triple)."
+....
+
+Key observations:
+
+* **Non-RDF assets** cannot have claims — they are opaque binary content (PDF, YAML, images).
+* **RDF assets** can be either credentials (verified VPs/VCs) or non-credentials (plain Turtle, RDF/XML, etc.).
+* All RDF assets contain triples, and **claims are synonymous with triples** in this context.
+* Even non-credential RDF assets contain claims; they are simply unverified.
+
+==== Claim Class Naming Strategy
+
+The Java class representing an extracted claim follows a phased naming convention: `SdClaim` (legacy) → `CredentialClaim` (current, CAT-NFR-01) → `RdfClaim` (future, CAT-FR-GD-02). See <<section-design-decisions, ADR 6>> for the full rationale and naming evolution table.
 
 === Schema
 
@@ -63,11 +102,11 @@ The term Schema is the generic term for either an ontology (RDF Schema 1.1footno
 Document Overview (Second Edition). W3C Recommendation 11 December 2012]]), shapes graph (SHACL 1.0footnote:[https://www.w3.org/TR/shacl/[Shapes Constraint Language (SHACL). W3C Recommendation 20 July 2017]]) or controlled vocabulary (SKOSfootnote:[https://www.w3.org/TR/skos-reference/[SKOS Simple Knowledge Organization System
 Reference. W3C Recommendation 18 August 2009]]). There is no need to have a relation between the ontology, shape graph and vocabulary, as all of these may evolve independently. Therefore, an identification of a schema as a whole is not needed. So, for the sake of simplicity, those files where considered individually.
 
-The classes and properties used in the Self-Descriptions are defined in underlying information models called ontologies.
+The classes and properties used in the credentials are defined in underlying information models called ontologies.
 In combination with the shapes graph these ontologies (which can come in the form of a complex, and possibly quite formal collection of terms or in the form of
 controlled vocabularies where such strict formalism is not necessarily used) build a schema. It is to be noted that only the shapes graph of the schema are used
-to semantically verify the Self-Description, meaning only the shapes graphs contain constraints on how to model a Self-Description.
-The ontology graphs (including the controlled vocabularies) are solely used to give more context to the information model which is used by the Self-Description.
+to semantically verify the credential, meaning only the shapes graphs contain constraints on how to model a credential.
+The ontology graphs (including the controlled vocabularies) are solely used to give more context to the information model which is used by the credential.
 To support a good governance of the uploaded schema files, we enforce a few integrity constraints w.r.t. all schema files via the _SD-Sch-NF-*_ acceptance criteria.
 
 ==== Schema Validation Checks
