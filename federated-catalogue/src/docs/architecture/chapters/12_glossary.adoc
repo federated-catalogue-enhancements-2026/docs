@@ -16,7 +16,7 @@ ifndef::imagesdir[:imagesdir: ../../images]
 |Term |Definition
 
 |Credential (formerly Self-Description / SD)
-|A credential is a Verifiable Presentation (VP) or standalone Verifiable Credential (VC) that expresses characteristics of a Resource, Service Offering or Participant and describes properties and Claims which are linked to the Identifier. The catalogue accepts both forms; in strict/Gaia-X mode a VP wrapper is required. In the Gaia-X v2 specification (ICAM v24.07), this concept replaces what was previously called a "Self-Description". At the catalogue's API and storage level, credentials are managed as **Assets** (see CAT-NFR-01).
+|A credential is a Verifiable Presentation (VP) or standalone Verifiable Credential (VC) that expresses characteristics of a Resource, Service Offering or Participant and describes properties and Claims which are linked to the Identifier. The catalogue accepts both forms; in strict/Gaia-X mode a VP wrapper is required. In the Gaia-X specificationfootnote:[https://docs.gaia-x.eu/technical-committee/identity-credential-access-management/24.07/credential_format/[Gaia-X Identity, Credential and Access Management / Credential format]], this concept replaces what was previously called a "Self-Description". At the catalogue's API and storage level, credentials are managed as **Assets**.
 
 |Verifiable Presentation (VP)
 |A verifiable presentation expresses data from one or more verifiable credentials, and is packaged in such a way that the authorship of the data is verifiable. 

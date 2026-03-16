@@ -15,7 +15,7 @@ This chapter describes some basic concepts and details, when handling credential
 
 === Credentials
 
-NOTE: In the Gaia-X v2 specification (ICAM v24.07), what was previously called "Self-Description" is now called a **Credential** — a Verifiable Presentation (VP) containing one or more Verifiable Credentials (VCs), or a standalone VC, that describes a Gaia-X entity. The catalogue accepts both forms (controlled by the `requireVP` flag in strict mode). At the catalogue's API and storage level, the generic term **Asset** is used (see CAT-NFR-01). This section uses "credential" to describe the domain concept.
+NOTE: In 2026 what was previously called "Self-Description" has been renamed to **Credential**footnote:[https://docs.gaia-x.eu/technical-committee/identity-credential-access-management/24.07/credential_format/[Gaia-X Identity, Credential and Access Management / Credential format]] — a Verifiable Presentation (VP) containing one or more Verifiable Credentials (VCs), or a standalone VC, that describes a trust framework entity. At the catalogue's API and storage level, the generic term **Asset** is used to also describe non-RDF content that can be used in the lenient default configuration, not requiring verification. This section uses "credential" to describe the original domain concept that is still available in the strict configuration profile of the catalogue.
 
 ==== Granularity of Credentials
 
@@ -56,7 +56,7 @@ Non-RDF assets do not have a `credentialSubject`. Instead, they receive an auto-
 
 ==== Storage Strategy
 
-Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), separate from the schema and context caches. Asset metadata (content type, file size, original filename) is stored in the `assets` table (renamed from `sdfiles` by CAT-NFR-01) with three additional columns. The `content` column is nullable — for non-RDF assets, the raw bytes live only in the File Store, not in the database.
+Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), separate from the schema and context caches. Asset metadata (content type, file size, original filename) is stored in the `assets` table (renamed from `sdfiles`) with three additional columns. The `content` column is nullable — for non-RDF assets, the raw bytes live only in the File Store, not in the database.
 
 === Asset Taxonomy and Claim Naming
 
@@ -74,17 +74,17 @@ classDiagram
         &lt;&lt;concept&gt;&gt;
     }
 
-    Asset <|-- RDFAsset : extends
-    Asset <|-- NonRDFAsset : extends
-    RDFAsset <|-- Credential : extends
-    RDFAsset <|-- NonCredential : extends
+    Asset <|-- RDFAsset
+    Asset <|-- NonRDFAsset
+    RDFAsset <|-- Credential
+    RDFAsset <|-- NonCredential
     Credential ..> Claim : contains
     NonCredential ..> Claim : contains
 
     note for Claim "A Claim is the atomic unit\nof semantic assertion (Triple)."
 ....
 
-Key observations:
+Key concepts:
 
 * **Non-RDF assets** cannot have claims — they are opaque binary content (PDF, YAML, images).
 * **RDF assets** can be either credentials (verified VPs/VCs) or non-credentials (plain Turtle, RDF/XML, etc.).

@@ -64,7 +64,7 @@ This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that 
 * The `POST /assets` endpoint accepts `multipart/form-data` and `application/octet-stream` in addition to `application/json` and `application/ld+json`.
 * An `RdfDetector` classifies uploads by content type (configurable allowlist) and content inspection (JSON-LD `@context` pattern).
 * RDF content follows the existing verification + graph storage path.
-* Non-RDF content bypasses verification and graph storage entirely. It is stored in a dedicated `assetFileStore` (separate directory from schema/context caches) with metadata in the `assets` table (renamed from `sdfiles` by CAT-NFR-01).
+* Non-RDF content bypasses verification and graph storage entirely. It is stored in a dedicated `assetFileStore` (separate directory from schema/context caches) with metadata in the `assets` table.
 * Three columns are added to `assets`: `content_type` (VARCHAR), `file_size` (BIGINT), `original_filename` (VARCHAR). The `content` column is made nullable (non-RDF assets store content only in the File Store).
 * Non-RDF assets receive auto-generated identifiers: `urn:asset:sha256:<content-hash>`.
 
@@ -72,7 +72,7 @@ This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that 
 
 === ADR 5: Fine-Grained Permission-Based Authorization
 
-**Context:** The original authorization model used four coarse-grained roles (Ro-MU-CA, Ro-MU-A, Ro-AS-Afootnote:[Originally named `Ro-SD-A` (Self-Description Administrator). Renamed to `Ro-AS-A` (Asset Administrator) by CAT-NFR-01 to align with the generic asset terminology.], Ro-PA-A) to control API access. This presented several limitations:
+**Context:** The original authorization model used four coarse-grained roles (Ro-MU-CA, Ro-MU-A, Ro-AS-Afootnote:[Originally named `Ro-SD-A` (Self-Description Administrator). Renamed to `Ro-AS-A` (Asset Administrator) to align with the generic asset terminology.], Ro-PA-A) to control API access. This presented several limitations:
 
 1. **No read-level control.** Asset and schema read endpoints were open to any authenticated user, with no way to restrict read access.
 2. **No separation of concerns.** The Ro-AS-A and Ro-MU-A roles granted full write access to assets, with no way to differentiate between create, update (revoke), and delete operations.
@@ -94,7 +94,7 @@ Backward compatibility is maintained by converting the legacy roles (Ro-MU-CA, R
 
 === ADR 6: Claim Class Naming Convention
 
-**Context:** CAT-NFR-01 renamed the legacy `SdClaim` class (tied to Self-Description terminology). The team needed to decide on the new name. Three options were considered:
+**Context:** CAT-NFR-01footnote:[Enhancement of the XFSC Federated Catalogue. 2025. https://github.com/eclipse-xfsc/docs/blob/9a178c30f76610e5924fd72c39d259d6a8ae0461/federated-catalogue/src/docs/CAT%20Enhancement/CAT_Enhancement_Specifications%20v1.0.pdf] renamed the legacy `SdClaim` class (tied to Self-Description terminology). The team needed to decide on the new name. Three options were considered:
 
 1. **`Claim`** — generic, forward-looking, but too broad for the current implementation which only extracts claims from credentials.
 2. **`AssetClaim`** — aligns with the generic asset terminology but is misleading because non-RDF assets cannot have claims.
@@ -114,17 +114,17 @@ classDiagram
         &lt;&lt;concept&gt;&gt;
     }
 
-    Asset <|-- RDFAsset : extends
-    Asset <|-- NonRDFAsset : extends
-    RDFAsset <|-- Credential : extends
-    RDFAsset <|-- NonCredential : extends
+    Asset <|-- RDFAsset
+    Asset <|-- NonRDFAsset
+    RDFAsset <|-- Credential
+    RDFAsset <|-- NonCredential
     Credential ..> Claim : contains
     NonCredential ..> Claim : contains
 
     note for Claim "A Claim is the atomic unit\nof semantic assertion (Triple)."
 ....
 
-Key observations from the review:
+Key concepts:
 
 * Non-RDF assets cannot have claims — they are opaque binary content.
 * RDF assets can be credentials (verified VPs/VCs) or non-credentials (plain Turtle, RDF/XML).

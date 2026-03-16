@@ -69,7 +69,7 @@ An alternative implementation would be Lissifootnote:[https://lissi.id/[Lissi - 
 
 ==== Graph database
 
-The graph database holds the claims of verified, active credentials. Claims of credentials that fail verification are not added to the graph database. Claims of Deprecated, Expired or Revoked assets will be deleted from the Graph database.
+The graph database holds the claims of possibly verified, active RDF assets. In strict configuration mode, claims of credentials that fail verification are not added to the graph database. Claims of Deprecated, Expired or Revoked assets will be deleted from the Graph database.
 
 The Graph Database can be considered as a kind of search index. The single source of truth are the active credentials, stored in the File Store. This means at any point in time the Graph database can be rebuilt from scratch by reimporting the claims of the credentials. This allows the following:
 
@@ -77,7 +77,7 @@ The Graph Database can be considered as a kind of search index. The single sourc
 
 . **Scalability**: Querying the Graph database might be the most critical part regarding performance. Therefore, the Graph Database can be replicated in the future by multiple, independent instances. Since there are no strict consistency requirements, changes in the Graph can be applied independently. In the control flow, all write operations on assets pass the Metadata Store. Therefore, the consistency can be enforced by that database.
 
-Generically returning the credential files containing claims that influence query response is not possible. To get the relevant credential files, the query to the Graph Database can be formulated to return the Gaia-X entity that is the __credentialSubject__ of a Verifiable Credential. Then this can be used as a filter for the assets endpoint, to download the credential file.
+Generically returning the credential files containing claims that influence query response is not possible. To get the relevant credential files, the query to the Graph Database can be formulated to return the trust framework entity that is the __credentialSubject__ of a Verifiable Credential. Then this can be used as a filter for the assets endpoint, to download the credential file.
 
 The graph database backend is **pluggable**. The implementation is selected via the `graphstore.impl` configuration property:
 
@@ -206,7 +206,7 @@ For convenience and backward compatibility, composite roles bundle multiple perm
 | Role ID | Role Name | Included Permissions
 | Ro-MU-CA | Catalogue Administrator | ADMIN_ALL (all permissions)
 | Ro-MU-A | Participant Administrator | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
-| Ro-AS-A | Asset Administratorfootnote:[Renamed from `Ro-SD-A` (Self-Description Administrator) by CAT-NFR-01.] | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
+| Ro-AS-A | Asset Administratorfootnote:[Renamed from `Ro-SD-A` (Self-Description Administrator).] | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
 | Ro-PA-A | Participant User Administrator | _(used for participant/user management only)_
 |===
 
@@ -711,28 +711,23 @@ public class AssetFilter {
 The asset metadata is stored in the metadata store, using the following data model:
 
 
-image:05_er_asset.png[ER Diagram representing an Asset]
-////
-This is the source code for the figure above. Directly added the figure due to a bug in mmdc.
-NOTE: The table was renamed from `sdfiles` to `assets` and `sdhash` to `asset_hash` by CAT-NFR-01.
-[mermaid, width=2000]
-....
-erDiagram
-    ASSET {
-        VARCHAR asset_hash PK
-        VARCHAR subjectid
-        VARCHAR issuer
-        TIMESTAMP uploadtime
-        TIMESTAMP statustime
-        TIMESTAMP expirationtime
-        CLOB content "nullable - NULL for non-RDF assets"
-        VARCHAR[] validators
-        VARCHAR content_type "MIME type (e.g. application/pdf)"
-        BIGINT file_size "asset size in bytes"
-        VARCHAR original_filename "client-provided filename"
-    }
-....
-////
+.ASSET table
+[cols="1,2,1,3", options="header"]
+|===
+| Type | Column | Key | Note
+
+| VARCHAR | asset_hash | PK |
+| VARCHAR | subjectid | |
+| VARCHAR | issuer | |
+| TIMESTAMP | uploadtime | |
+| TIMESTAMP | statustime | |
+| TIMESTAMP | expirationtime | |
+| CLOB | content | | nullable — NULL for non-RDF assets
+| VARCHAR[] | validators | |
+| VARCHAR | content_type | | MIME type (e.g. application/pdf)
+| BIGINT | file_size | | asset size in bytes
+| VARCHAR | original_filename | | client-provided filename
+|===
 
 NOTE: The `content` column is nullable. For credentials (RDF), it stores the JSON-LD in the database. For non-RDF assets, content is stored only in the File Store and the database column remains `NULL`. The three asset metadata columns (`content_type`, `file_size`, `original_filename`) are backfilled with `content_type = 'application/ld+json'` for existing records. The table was renamed from `sdfiles` to `assets` and the primary key from `sdhash` to `asset_hash` (see Liquibase changeset `2026-03-09-rename-sdfiles-to-assets`).
 

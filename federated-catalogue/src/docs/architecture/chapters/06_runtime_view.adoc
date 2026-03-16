@@ -195,7 +195,7 @@ sequenceDiagram
 **Step 6** Return the Participant verification result. This should be an extension of API Participant structure.
 
 **Step 7** The AssetStore must store credential content first in a FileStore, which is a non-transactional resource. In case of an exception on a subsequent step the file should be deleted in compensation action. Thus, the file identifier must be stored in some operation context.
-The MetaData store and Graph store are transactional resources and must participate in the current operation transaction context.
+The AssetMetadata store and GraphStore are transactional resources and must participate in the current operation transaction context.
 
 **Step 11** Keycloak is a non-transactional resource, accessed via REST interface. In case of any error at group addition procedure, an exception must be thrown and the current transaction must be rolled back entirely.
 
