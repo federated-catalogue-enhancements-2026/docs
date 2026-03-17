@@ -109,6 +109,17 @@ to semantically verify the credential, meaning only the shapes graphs contain co
 The ontology graphs (including the controlled vocabularies) are solely used to give more context to the information model which is used by the credential.
 To support a good governance of the uploaded schema files, we enforce a few integrity constraints w.r.t. all schema files via the _SD-Sch-NF-*_ acceptance criteria.
 
+==== Non-RDF Schemas (CAT-FR-SF-01)
+
+In addition to RDF-based schemas, the catalogue supports storage of **non-RDF schemas**: JSON Schemafootnote:[https://json-schema.org/draft/2020-12/json-schema-core[JSON Schema Draft 2020-12]] (`application/schema+json`) and XML Schemafootnote:[https://www.w3.org/TR/xmlschema11-1/[W3C XML Schema Definition Language (XSD) 1.1]] (`application/xml`).
+
+Non-RDF schemas are uploaded and managed through the same `/schemas` endpoint as RDF schemas. The `SchemasService` routes requests based on the `Content-Type` header:
+
+* **RDF content types** (`application/rdf+xml`, `application/ld+json`, `text/turtle`) are processed by the `SchemaStore` — parsed as RDF, type-detected, and subject to the integrity constraints described above.
+* **Non-RDF content types** (`application/schema+json`, `application/xml`) bypass RDF parsing entirely. The raw file is stored in the schema File Store, and metadata (content type, upload timestamp) is persisted in the Metadata Store. An auto-generated identifier (`urn:schema:sha256:<hash>`) is assigned based on content hash, providing deduplication.
+
+Non-RDF schemas appear in the schema listing (`GET /schemas`) under their own type categories (`jsonSchemas`, `xmlSchemas`) and can be retrieved, replaced, and deleted through the standard schema CRUD endpoints. However, they are **not used for automatic SHACL verification** of credentials — they serve as stored reference schemas for external tooling or manual validation.
+
 ==== Schema Validation Checks
 Each schema before adding it, will be analysed. The Analysis process should check first
 if the schema is syntactically and semantically valid instances of RDF-graphs in the

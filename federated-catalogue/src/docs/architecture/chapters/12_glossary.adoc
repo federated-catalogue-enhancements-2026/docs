@@ -34,7 +34,7 @@ ifndef::imagesdir[:imagesdir: ../../images]
 |A role an entity can perform by asserting claims about one or more subjects and creating a verifiable credential from these claims.
 
 |Schema
-|Generic term for either an ontology, shape graph or controlled vocabulary.
+|Generic term for either an ontology, shape graph, controlled vocabulary (all RDF-based), or a non-RDF schema (JSON Schema, XML Schema). RDF schemas participate in the verification pipeline and composite schema graph. Non-RDF schemas are stored as reference files and do not participate in automatic SHACL verification.
 
 |Term
 |A node in a RDF graph. A node can be an IRI, a literal, or a blank node.
