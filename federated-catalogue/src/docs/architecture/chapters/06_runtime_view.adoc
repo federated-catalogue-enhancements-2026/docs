@@ -26,7 +26,7 @@ sequenceDiagram
     participant API
     participant RdfDetector
     participant Verification
-    participant SDStore as SD-Storage
+    participant AssetStore as AssetStore
     participant GraphDB as Graph-Database
     User ->> + Auth:Authenticate
     Auth -->> - User:OK
@@ -36,14 +36,14 @@ sequenceDiagram
     alt RDF content
         API ->> + Verification:Verify
         Verification -->> - API:OK
-        API ->> + SDStore:storeSelfDescription
-        SDStore ->> + GraphDB:addClaims
-        GraphDB -->> - SDStore:OK
-        SDStore -->> - API:OK
+        API ->> + AssetStore:storeCredential
+        AssetStore ->> + GraphDB:addClaims
+        GraphDB -->> - AssetStore:OK
+        AssetStore -->> - API:OK
     else Non-RDF content
-        API ->> + SDStore:storeAsset
-        Note right of SDStore: No verification, no graph
-        SDStore -->> - API:OK
+        API ->> + AssetStore:storeUnverified
+        Note right of AssetStore: No verification, no graph
+        AssetStore -->> - API:OK
     end
     API -->> - User:OK
 ....
@@ -64,7 +64,7 @@ Anonymous users cannot request Participant information directly. Logged-in users
         participant API As ParticipantsController
         participant Parti as ParticipantsService
         participant PartiDao as ParticipantsDao
-        participant SDStore as SelfDescriptionStorage
+        participant AssetStore as AssetStore
         participant Keycloak as Keycloak
 
         User ->> + Auth:Authorize(Ro-MU-CA)
@@ -82,9 +82,9 @@ Anonymous users cannot request Participant information directly. Logged-in users
 
         PartiDao -->> - Parti: Participants
 
-        Parti ->> + SDStore: getByFilter(filter)
-        SDStore -->> - Parti: SD Files
-        Parti ->> Parti: [Set SDs to Participants]
+        Parti ->> + AssetStore: getByFilter(filter)
+        AssetStore -->> - Parti: Assets
+        Parti ->> Parti: [Set Assets to Participants]
         Parti -->> - API: Participants
         API -->> - User: Participants
 ....
@@ -101,7 +101,7 @@ sequenceDiagram
     participant Portal
     participant ParticipantController
     participant ParticipantsService
-    participant SDStore as SelfDescriptionStorage
+    participant AssetStore as AssetStore
     participant ParticipantDao
     participant Keycloak
     Portal ->> + ParticipantController: GET /participants/{partID}
@@ -111,9 +111,9 @@ sequenceDiagram
     Keycloak -->> - ParticipantDao: group
     ParticipantDao ->> ParticipantDao: fromGroupRepo(group): participant
     ParticipantDao -->> - ParticipantsService: participant
-    ParticipantsService ->> + SDStore: getSDFileByHash(part.sdHash)
-    SDStore -->> - ParticipantsService: SDFile
-    ParticipantsService ->> ParticipantsService: [Set SDs to Participants]
+    ParticipantsService ->> + AssetStore: getByHash(part.assetHash)
+    AssetStore -->> - ParticipantsService: AssetMetadata
+    ParticipantsService ->> ParticipantsService: [Set Assets to Participants]
     ParticipantsService -->> - ParticipantController: participant
     ParticipantController -->> - Portal: participant
 ....
@@ -169,16 +169,16 @@ sequenceDiagram
     participant ParticipantController
     participant ParticipantsService
     participant VerificationService
-    participant SDStore as SelfDescriptionStorage
+    participant AssetStore as AssetStore
     participant ParticipantDao
     participant Keycloak
 
     User ->> + ParticipantController: POST /participants
-    ParticipantController ->> + ParticipantsService: addParticipant (selfDescription)
-    ParticipantsService ->> + VerificationService: verifyParticipantSelfDescription(selfDescription)
-    VerificationService -->> - ParticipantsService: VerificationResultParticipant
-    ParticipantsService ->> + SDStore: storeSelfDescription(SelfDescriptionMetadata selfDescription, VerificationResult sdVerificationResults)
-    SDStore -->> - ParticipantsService: [Ok, if no exception]
+    ParticipantController ->> + ParticipantsService: addParticipant (asset)
+    ParticipantsService ->> + VerificationService: verifyParticipantCredential(asset)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
+    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata assetMetadata, CredentialVerificationResult verificationResult)
+    AssetStore -->> - ParticipantsService: [Ok, if no exception]
     ParticipantsService ->> + ParticipantDao: create(participant)
     ParticipantDao ->> ParticipantDao: toGroupRepo(participant):group
     ParticipantDao ->> + Keycloak: POST /realms/gaia-x/groups
@@ -188,14 +188,14 @@ sequenceDiagram
     ParticipantController -->> - User: 201 CREATED (ParticipantMetaData)
 ....
 
-**Step 3** Participant's Self-Description passed in request body in JSON-LD format
+**Step 3** Participant's credential passed in request body in JSON-LD format
 
 **Step 4** ParticipantsService.addParticipant is annotated as @Transactional
 
 **Step 6** Return the Participant verification result. This should be an extension of API Participant structure.
 
-**Step 7** SelfDescriptionStorage must store selfDescription content first in a FileStore, which is non-transactional resource. In case of an exception on a subsequent step the file should be deleted in compensation action. Thus, the file identifier must be stored in some operation context.
-SelfDescription MetaData store and SelfDescription Graph store are transactional resources and must participate in the current operation transaction context.
+**Step 7** The AssetStore must store credential content first in a FileStore, which is a non-transactional resource. In case of an exception on a subsequent step the file should be deleted in compensation action. Thus, the file identifier must be stored in some operation context.
+The AssetMetadata store and GraphStore are transactional resources and must participate in the current operation transaction context.
 
 **Step 11** Keycloak is a non-transactional resource, accessed via REST interface. In case of any error at group addition procedure, an exception must be thrown and the current transaction must be rolled back entirely.
 
@@ -214,23 +214,23 @@ sequenceDiagram
     participant ParticipantController
     participant ParticipantsService
     participant VerificationService
-    participant SDStore
+    participant AssetStore as AssetStore
     participant ParticipantDao
     participant Keycloak
-    Portal ->> + ParticipantController: PUT /participants/{partID} (selfDescription)
-    ParticipantController ->> + ParticipantsService: updateParticipant (partID, selfDescription)
+    Portal ->> + ParticipantController: PUT /participants/{partID} (asset)
+    ParticipantController ->> + ParticipantsService: updateParticipant (partID, asset)
     ParticipantsService ->> ParticipantsService: checkAccess [updated.participantId == user.participantId]
     ParticipantsService ->> + ParticipantDao: select(partID)
     ParticipantDao ->> + Keycloak: GET /realms/gaia-x/groups/{partID}
     Keycloak -->> - ParticipantDao: group
     ParticipantDao ->> ParticipantDao: fromGroupRepo(group): Participant
     ParticipantDao -->> - ParticipantsService: Participant
-    ParticipantsService ->> + VerificationService: verifyParticipant(SelfDescription)
-    VerificationService -->> - ParticipantsService: VerificationResultParticipant
+    ParticipantsService ->> + VerificationService: verifyParticipantCredential(credential)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
     ParticipantsService ->> ParticipantsService: checkUpdates(existing, updated)
-    ParticipantsService ->> + SDStore: storeSelfDescription(SelfDescriptionMetadata, VerificationResultParticipant)
-    Note right of SDStore: For details see Diagram <br /> "Store Self-Descriptions to <br /> the Self-Description store"
-    SDStore -->> - ParticipantsService: ''
+    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultParticipant)
+    Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
+    AssetStore -->> - ParticipantsService: ''
     ParticipantsService --> + ParticipantDao: update(Participant)
     ParticipantDao -->> ParticipantDao: toGroupRepo(Participant): group
     ParticipantDao ->> + Keycloak: PUT /realms/gaia-x/groups/{partID}{group}
@@ -259,7 +259,7 @@ Notes:
 
         participant API as ParticipantsController
         participant Parti as ParticipantsService
-        participant SDStore as SelfDescriptionStore
+        participant AssetStore as AssetStore
         participant Keycloak
         participant Graph as GraphDB
 
@@ -276,13 +276,13 @@ Notes:
         Parti ->> + Keycloak: GET /realms/gaia-x/groups/{partID}
         Keycloak -->> - Parti: Participant
 
-        Parti ->> + SDStore: getByHash(participantSDHash)
-        SDStore -->> - Parti: ParticipantSD
+        Parti ->> + AssetStore: getByHash(participantAssetHash)
+        AssetStore -->> - Parti: ParticipantAsset
 
-        Parti ->> + SDStore: deleteSelfDescription(participantSDHash)
-        SDStore ->> + Graph: deleteClaims()
-        Graph -->> - SDStore:Null
-        SDStore -->> - Parti: Null
+        Parti ->> + AssetStore: deleteAsset(participantAssetHash)
+        AssetStore ->> + Graph: deleteClaims()
+        Graph -->> - AssetStore:Null
+        AssetStore -->> - Parti: Null
 
         Parti ->> + Keycloak: DELETE /realms/gaia-x/groups/{partID}
         Keycloak -->> - Parti: Participant
@@ -434,7 +434,7 @@ This may change depending on SSO implementation.
 | Role ID | Can be given by
 | Ro-MU-CA | Ro-MU-CA
 | Ro-MU-A | Ro-MU-CA, Ro-MU-A
-| Ro-SD-A | Ro-MU-CA, Ro-MU-A, Ro-Pa-A (if not self)
+| Ro-AS-A | Ro-MU-CA, Ro-MU-A, Ro-Pa-A (if not self)
 | Ro-Pa-A | Ro-MU-CA, Ro-MU-A, Ro-Pa-A
 |===
 
@@ -514,7 +514,7 @@ sequenceDiagram
     API -->> - User: UserProfile
 ....
 
-==== Requesting all Self-Descriptions
+==== Requesting all Assets
 
 [mermaid, width=2000]
 ....
@@ -523,18 +523,18 @@ sequenceDiagram
     actor User
     participant Auth as Authentication
     participant API
-    participant SDStore as SelfDescriptionStorage
+    participant AssetStore as AssetStore
     User ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
     Auth -->> - User:OK
-    User ->> + API:GET /self-descriptions
-    API ->> + SDStore: getByFilter()
-    SDStore -->> - API: List<SelfDescriptionMetadata>
-    API -->> - User:List<SelfDescriptionMetadata>
+    User ->> + API:GET /assets
+    API ->> + AssetStore: getByFilter()
+    AssetStore -->> - API: List<AssetMetadata>
+    API -->> - User:List<AssetMetadata>
 ....
 
-The __SelfDescriptionStorage__ must only return Self-Descriptions with __SelfDescription.lifeCycle == Active__.
+The __AssetStore__ must only return assets with __Asset.lifeCycle == Active__.
 
-==== Filtering all Self-Descriptions
+==== Filtering all Assets
 
 [mermaid, width=2000]
 ....
@@ -543,17 +543,17 @@ sequenceDiagram
     actor User
     participant Auth as Authentication
     participant API
-    participant SDStore as SelfDescriptionStorage
+    participant AssetStore as AssetStore
     User ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
     Auth -->> - User:OK
-    User ->> + API:GET /self-descriptions
-    API ->> + SDStore: getByFilter(SdFilter filterParams)
-    SDStore -->> - API: List<SelfDescriptionMetadata, SelfDescription>
-    API -->> - User:List<SelfDescriptionMetadata, SelfDescription>
+    User ->> + API:GET /assets
+    API ->> + AssetStore: getByFilter(AssetFilter filterParams)
+    AssetStore -->> - API: List<AssetMetadata, Asset>
+    API -->> - User:List<AssetMetadata, Asset>
 ....
 
 
-==== Requesting a specific Self-Description
+==== Requesting a specific Asset
 
 [mermaid, width=2000]
 ....
@@ -562,19 +562,19 @@ sequenceDiagram
     actor User
     participant Auth as Authentication
     participant API
-    participant SDStore as SelfDescriptionStorage
+    participant AssetStore as AssetStore
     User ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
     Auth -->> - User:OK
-    User ->> + API:GET /self-descriptions/{self_description_hash}
-    API ->> + SDStore: getByHash(String self_description_hash)
-    SDStore -->> - API: SelfDescriptionMetadata<br>+SelfDescription
-    API -->> - User:SelfDescriptionMetadata, SelfDescription
+    User ->> + API:GET /assets/{asset_hash}
+    API ->> + AssetStore: getByHash(String asset_hash)
+    AssetStore -->> - API: AssetMetadata<br>+Asset
+    API -->> - User:AssetMetadata, Asset
 ....
 
 
-==== Adding a Self-Description for an Offering
+==== Adding a Credential for an Offering
 
-The basic flow of creating and updating an offering is identical. The distinction cannot be made until the SD-Storage receives the Self-Description metadata and checks if it already exists.
+The basic flow of creating and updating an offering is identical. The distinction cannot be made until the Asset Store receives the credential metadata and checks if it already exists.
 
 The verification steps shown below are configuration-dependent. In the default profile, only syntax and semantic verification are active. In the strict profile, all steps (including schema validation and signature verification) are executed. See <<_verification_profiles>> for details.
 
@@ -586,14 +586,14 @@ sequenceDiagram
     participant Auth
     participant API
     participant VerificationService
-    participant SDStore as SD-Storage
+    participant AssetStore as AssetStore
     User ->> + Auth:Authorize(ASSET_CREATE | ADMIN_ALL)
     Auth -->> - User:[OK]
-    User ->> + API:POST /self-descriptions
-    API ->> + VerificationService:verifyOfferingSelfDescription(sd)
+    User ->> + API:POST /assets
+    API ->> + VerificationService:verifyOfferingCredential(credential)
     VerificationService --> VerificationService:[Verify Syntax]
     VerificationService --> VerificationService:[Verify Semantic]
-    VerificationService --> VerificationService:[Extract SD Type]
+    VerificationService --> VerificationService:[Extract Credential Type]
     opt schema validation enabled
         VerificationService --> VerificationService:[Verify Schema]
     end
@@ -602,22 +602,22 @@ sequenceDiagram
     end
     VerificationService --> VerificationService:[Extract Participant]
     VerificationService --> VerificationService:[Extract Claims]
-    VerificationService -->> - API:VerificationResult
-    API --> API:Check[SD-participant == user-participant | Ro-MU-CA]
-    alt SD.type != Participant
+    VerificationService -->> - API:CredentialVerificationResult
+    API --> API:Check[credential-participant == user-participant | Ro-MU-CA]
+    alt credential.type != Participant
         API -->> User: [Error. Use Participant API]
-    else SD.type == Offering
-        API ->> + SDStore: storeSelfDescription(SelfDescriptionMetadata, VerificationResultOffering)
-    Note right of SDStore: For details see Diagram <br /> "Store Self-Descriptions to <br /> the Self-Description store"
-        SDStore -->> - API: [Ok, if no exception]
-        API -->> - User:[Self-Description Meta]
+    else credential.type == Offering
+        API ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultOffering)
+    Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
+        AssetStore -->> - API: [Ok, if no exception]
+        API -->> - User:[Asset Meta]
     end
 ....
 
 
 ==== Adding a Non-RDF Asset
 
-Non-RDF assets (PDFs, plain JSON, YAML, images, binary files) are uploaded through the same `POST /self-descriptions` endpoint using `multipart/form-data` or `application/octet-stream`. The `RdfDetector` classifies the content; non-RDF assets bypass verification and graph storage entirely.
+Non-RDF assets (PDFs, plain JSON, YAML, images, binary files) are uploaded through the same `POST /assets` endpoint using `multipart/form-data` or `application/octet-stream`. The `RdfDetector` classifies the content; non-RDF assets bypass verification and graph storage entirely.
 
 [mermaid, width=2000]
 ....
@@ -628,41 +628,41 @@ sequenceDiagram
     participant API as AssetUploadController
     participant Service as AssetUploadService
     participant RdfDetector
-    participant SDStore as SD-Storage
+    participant AssetStore as AssetStore
     participant FileStore as Asset FileStore
 
     User ->> + Auth:Authorize(ASSET_CREATE | ADMIN_ALL)
     Auth -->> - User:OK
-    User ->> + API:POST /self-descriptions (multipart/form-data or application/octet-stream)
+    User ->> + API:POST /assets (multipart/form-data or application/octet-stream)
     API ->> + Service:processUpload(bytes, contentType, filename)
     Service ->> + RdfDetector:isRdf(contentType, bytes)
     RdfDetector -->> - Service:false
     Service ->> Service:computeSHA256(bytes)
     Service ->> Service:buildMetadata(hash, contentType, fileSize, participantId)
-    Service ->> + SDStore:storeAsset(metadata, filename)
-    SDStore ->> SDStore:generateSubjectId(prefix + hash)
-    SDStore ->> SDStore:insertMetadata(PostgreSQL)
-    SDStore ->> + FileStore:storeFile(hash, contentAccessor)
-    FileStore -->> - SDStore:OK
-    SDStore -->> - Service:storedMetadata
-    Service -->> - API:SelfDescriptionMetadata
+    Service ->> + AssetStore:storeUnverified(metadata, filename)
+    AssetStore ->> AssetStore:generateSubjectId(prefix + hash)
+    AssetStore ->> AssetStore:insertMetadata(PostgreSQL)
+    AssetStore ->> + FileStore:storeFile(hash, contentAccessor)
+    FileStore -->> - AssetStore:OK
+    AssetStore -->> - Service:storedMetadata
+    Service -->> - API:AssetMetadata
     API -->> - User:201 Created (metadata with contentType, fileSize, id)
 ....
 
 **Step 5-6:** `RdfDetector` checks the MIME type against the configured allowlist and, for `application/json`, inspects content for a JSON-LD `@context` pattern.
 
-**Step 9:** `storeAsset` generates a content-addressable identifier (`urn:asset:sha256:<hash>`) if no subject ID is provided. If an asset with the same hash already exists, HTTP 409 (Conflict) is returned.
+**Step 9:** `storeUnverified` generates a content-addressable identifier (`urn:asset:sha256:<hash>`) if no subject ID is provided. If an asset with the same hash already exists, HTTP 409 (Conflict) is returned.
 
 **Step 11:** The raw bytes are written to the `assetFileStore`, not the schema/context File Store.
 
-==== Updating a Self-Description for an Offering
+==== Updating a Credential for an Offering
 
-There is no direct way to update a Self-Description. Updates can happen by submitting a new Self-Description, referring to the same credentialSubject. The old Self-Description for the same credentialSubject will be depricated.
+There is no direct way to update a credential. Updates can happen by submitting a new credential, referring to the same credentialSubject. The old credential for the same credentialSubject will be deprecated.
 
-See runtime scenario <<_adding_a_self_description_for_an_offering>> for more details.
+See runtime scenario <<_adding_a_credential_for_an_offering>> for more details.
 
 
-==== Revoking a Self-Description for an Offering
+==== Revoking a Credential for an Offering
 
 [mermaid, width=2000]
 ....
@@ -671,22 +671,22 @@ sequenceDiagram
     actor User
     participant API
     participant Auth
-    participant SDStore as SD-Storage
-    User ->> + API:POST /self-descriptions/{self_description_hash}/revoke
+    participant AssetStore as AssetStore
+    User ->> + API:POST /assets/{asset_hash}/revoke
     API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
     Auth -->> - API:[OK]
-    API ->> + SDStore: getByHash(self_description_hash)
-    SDStore -->> - API: SelfDescriptionMetadata
-    API --> API:Check[SD-participant == user-participant | Ro-MU-CA]
-    alt SD.type != Participant
+    API ->> + AssetStore: getByHash(asset_hash)
+    AssetStore -->> - API: AssetMetadata
+    API --> API:Check[credential-participant == user-participant | Ro-MU-CA]
+    alt credential.type != Participant
         API -->> User: [Error. Use Participant API]
-        Note right of User: The handling of participant SDs is still open. See #6
-    else SD.type == Offering
-        API ->> + SDStore: changeLifeCycleStatus(self_description_hash, REVOKED)
-        SDStore -->> SDStore: getCredentialSubjectForHash()
-        SDStore -->> GraphDB: deleteClaims(credentialSubject)
-        SDStore -->> - API: [Ok, if no exception]
-        API -->> - User:[Self-Description Meta]
+        Note right of User: The handling of participant credentials is still open. See #6
+    else credential.type == Offering
+        API ->> + AssetStore: changeLifeCycleStatus(asset_hash, REVOKED)
+        AssetStore -->> AssetStore: getCredentialSubjectForHash()
+        AssetStore -->> GraphDB: deleteClaims(credentialSubject)
+        AssetStore -->> - API: [Ok, if no exception]
+        API -->> - User:[Asset Meta]
     end
 ....
 
@@ -828,11 +828,11 @@ sequenceDiagram
     SchemaStore -->> - API:SchemaStoreResult {id, warning}
     API ->> API:[Convert to SchemaResult {id, warnings}]
     API -->> - User:SchemaResult {id, warnings}
-    loop For Each SD
-        Revalidation ->> + Verification:Validate SDs
+    loop For Each Credential
+        Revalidation ->> + Verification:Validate Credentials
         Verification -->> - Revalidation:Result
         alt If NOK
-            Revalidation ->> SchemaStore:Revoke SD
+            Revalidation ->> SchemaStore:Revoke Credential
         end
     end
     deactivate Revalidation
@@ -841,7 +841,7 @@ sequenceDiagram
 
 ==== Deleting a Schema
 
-When deleting a schema Self-Descriptions do not need to be re-verified, since a Self-Description cannot conflict with a non-existing schema.
+When deleting a schema, credentials do not need to be re-verified, since a credential cannot conflict with a non-existing schema.
 [mermaid, width=2000]
 ....
 sequenceDiagram
@@ -894,7 +894,7 @@ sequenceDiagram
     else language supported
         Validator -->> - API: OK
     end
-    API ->> + Graph: queryData(sdQuery)
+    API ->> + Graph: queryData(query)
     Graph ->> Graph: validateQuery()
     Note right of Graph: Only read queries are allowed
     Graph ->> Graph: executeQuery()
@@ -924,11 +924,11 @@ sequenceDiagram
 ....
 
 
-==== Request Self-Description verification HTML page
+==== Request credential verification HTML page
 
-When calling `GET /verifications/self-descriptions` a static HTML page is returned, which allows to submit a Self-Description for validation.
+When calling `GET /verification` a static HTML page is returned, which allows to submit a credential for validation.
 
-==== Request verification for a Self-Description
+==== Request verification for a Credential
 
 The `/verification` endpoint accepts optional query parameters to override the server-level defaults per request: `verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature` (all boolean, defaulting to the server configuration). This allows callers to test specific verification aspects in isolation.
 
@@ -939,12 +939,12 @@ sequenceDiagram
     actor User
     participant API
     participant VerificationService
-    User ->> + API:POST /verifications/self-descriptions<br>(?verifySchema=...&verifyVPSignature=...&verifyVCSignature=...)
-    API ->> + VerificationService:verifySelfDescription(sd, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
+    User ->> + API:POST /verification<br>(?verifySchema=...&verifyVPSignature=...&verifyVCSignature=...)
+    API ->> + VerificationService:verifyCredential(credential, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
     VerificationService ->> VerificationService: [Verify Syntax]
     opt verifySemantics [default true]
         VerificationService ->> VerificationService: [Verify Semantic]
-        VerificationService ->> VerificationService: [Extract SD Type]
+        VerificationService ->> VerificationService: [Extract Credential Type]
     end
     opt verifySchema [default false]
         VerificationService ->> SchemaValidationService: [Validate Claims vs SHACL]
@@ -955,117 +955,117 @@ sequenceDiagram
     end
     VerificationService ->> VerificationService:[Extract Claims]
     VerificationService ->> VerificationService:[Filter Protected Namespace (fcmeta:)]
-    Note right of VerificationService: Filtered triples produce<br/>warnings in VerificationResult
-    VerificationService -->> - API:VerificationResult (incl. warnings)
-    API -->> -User: VerificationResult (incl. warnings)
+    Note right of VerificationService: Filtered triples produce<br/>warnings in CredentialVerificationResult
+    VerificationService -->> - API:CredentialVerificationResult (incl. warnings)
+    API -->> -User: CredentialVerificationResult (incl. warnings)
 ....
 
 === Detailed sub-scenarios
 The previous section described the sce
 This section describes some sub scenarios, that occure
 
-==== Store Self-Descriptions to the Self-Description store
-This sequence diagram shows the detailed flow, when storing Self-Descriptions in the Self-Description store.
-Since Self-Descriptions themselves are immutable, they can't be updated. To update the description of an Offering or Participant, a new Self-Description with the same __credentialsSubject__ must be passed to the storeSelfDescription component. This __credentialsSubject__ is internally used to check if an update workflow is needed. Confurrent modifications are avoided by using a transaction on the relational database used for storing the meta data of the Self-Description, and locking the row of the currently active Self-Description for the given __credentialsSubject__. A partial index on the metadata database ensures that for a given __credentialsSubject__ only one Self-Description can have the state __Active__.
+==== Store Credentials to the Asset Store
+This sequence diagram shows the detailed flow, when storing credentials in the Asset Store.
+Since credentials are immutable, they can't be updated. To update the description of an Offering or Participant, a new credential with the same __credentialsSubject__ must be passed to the storeCredential component. This __credentialsSubject__ is internally used to check if an update workflow is needed. Concurrent modifications are avoided by using a transaction on the relational database used for storing the metadata of the asset, and locking the row of the currently active credential for the given __credentialsSubject__. A partial index on the metadata database ensures that for a given __credentialsSubject__ only one credential can have the state __Active__.
 
 [mermaid, width=2000]
 ....
 sequenceDiagram
     autonumber
     participant Service
-    participant SDStore as SD-Storage
+    participant AssetStore as AssetStore
     participant MetaData as MetaData Store
     participant FileStore as File Store
-        Service ->> + SDStore: storeSelfDescription<br>(SD-Metadata, VerificationResult)
-        SDStore ->> + MetaData:getForActiveSd<br>(credentialSubject)
-        MetaData -->> SDStore:MetaData or NULL
+        Service ->> + AssetStore: storeCredential<br>(AssetMetadata, CredentialVerificationResult)
+        AssetStore ->> + MetaData:getActiveForSubject<br>(credentialSubject)
+        MetaData -->> AssetStore:MetaData or NULL
         opt credentialSubject is present
-            SDStore ->> MetaData:depricateOldSD()
-            MetaData -->> SDStore:OK
-            SDStore ->> GraphDB:deleteClaims(credentialSubject)
+            AssetStore ->> MetaData:deprecateExisting()
+            MetaData -->> AssetStore:OK
+            AssetStore ->> GraphDB:deleteClaims(credentialSubject)
         end
-        SDStore ->> MetaData:storeMetaData()
-        MetaData -->> - SDStore:OK
-        SDStore ->> + FileStore:storeNewSD()
-        FileStore -->> - SDStore:OK
-        SDStore ->> GraphDB:addClaims(Claims, credentialSubject)
-        SDStore -->> - Service: [Ok, if no exception]
+        AssetStore ->> MetaData:storeMetaData()
+        MetaData -->> - AssetStore:OK
+        AssetStore ->> + FileStore:storeFile()
+        FileStore -->> - AssetStore:OK
+        AssetStore ->> GraphDB:addClaims(Claims, credentialSubject)
+        AssetStore -->> - Service: [Ok, if no exception]
 ....
 
-==== Store Non-RDF Assets to the Self-Description store
+==== Store Non-RDF Assets to the Asset Store
 
-This sequence diagram shows the flow when storing a non-RDF asset. Unlike Self-Descriptions, assets skip graph database interaction entirely. The content is stored in the asset File Store and metadata (including content type, file size, and original filename) is stored in the Metadata Store.
+This sequence diagram shows the flow when storing a non-RDF asset. Unlike credentials, non-RDF assets skip graph database interaction entirely. The content is stored in the asset File Store and metadata (including content type, file size, and original filename) is stored in the Metadata Store.
 
 [mermaid, width=2000]
 ....
 sequenceDiagram
     autonumber
     participant Service
-    participant SDStore as SD-Storage
+    participant AssetStore as AssetStore
     participant MetaData as MetaData Store
     participant FileStore as Asset File Store
-    Service ->> + SDStore: storeAsset(metadata, filename)
-    SDStore ->> SDStore: generateSubjectId(prefix + hash)
-    SDStore ->> + MetaData: insertMetadata(hash, subjectId,<br>contentType, fileSize, filename)
-    MetaData -->> - SDStore: OK
-    SDStore ->> + FileStore: storeFile(hash, contentAccessor)
-    FileStore -->> - SDStore: OK
-    SDStore -->> - Service: storedMetadata
+    Service ->> + AssetStore: storeUnverified(metadata, filename)
+    AssetStore ->> AssetStore: generateSubjectId(prefix + hash)
+    AssetStore ->> + MetaData: insertMetadata(hash, subjectId,<br>contentType, fileSize, filename)
+    MetaData -->> - AssetStore: OK
+    AssetStore ->> + FileStore: storeFile(hash, contentAccessor)
+    FileStore -->> - AssetStore: OK
+    AssetStore -->> - Service: storedMetadata
 ....
 
 NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the metadata filter endpoints.
 
 ==== Periodic Validation of Signatures
-This sequence diagram shows the detailed flow, when checking the expiration date of the signatures of all Self-Descriptions.  This sequence is to be periodically triggered.
+This sequence diagram shows the detailed flow, when checking the expiration date of the signatures of all credentials.  This sequence is to be periodically triggered.
 
 [mermaid, width=2000]
 ....
 sequenceDiagram
     autonumber
     participant Scheduler
-    participant SDStore as SD Store
+    participant AssetStore as AssetStore
     participant Database
     loop once per day
-        Scheduler ->> + SDStore: invalidateSelfDescriptions()
-        SDStore ->> + Database:getAllActiveSdWithExpirationTimeInThePast()
-        Database -->> - SDStore: List<SD>
-        loop for all returned SDs
-            SDStore ->> SDStore:changeLifeCycleStatus(hash, DEPRECATED)
-            Note right of SDStore: This will update the DB <br /> and the GraphStore.
+        Scheduler ->> + AssetStore: invalidateExpiredAssets()
+        AssetStore ->> + Database:getAllActiveAssetsWithExpirationTimeInThePast()
+        Database -->> - AssetStore: List<Asset>
+        loop for all returned assets
+            AssetStore ->> AssetStore:changeLifeCycleStatus(hash, DEPRECATED)
+            Note right of AssetStore: This will update the DB <br /> and the GraphStore.
         end
-        SDStore -->> - Scheduler: [Count]
+        AssetStore -->> - Scheduler: [Count]
     end
 ....
 
 
 === Description of shared procedures
 
-==== Verify Self-Description
+==== Verify Credential
 
-The verification of SDs consists of up to four stages, each independently configurable (see <<_verification_profiles>>).
-Besides verifying the SD, additional tasks are executed (e.g., parsing, claim extraction).
+The verification of credentials consists of up to four stages, each independently configurable (see <<_verification_profiles>>).
+Besides verifying the credential, additional tasks are executed (e.g., parsing, claim extraction).
 
-`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `VerificationResult`. See <<_verification_strategy_pattern>> for details.
-**Syntactic validation** is always active. The SD is parsed as JSON-LD and validated against the Verifiable Credential data model. Any syntactic issue will raise an error here.
+`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`. See <<_verification_strategy_pattern>> for details.
+**Syntactic validation** is always active. The credential is parsed as JSON-LD and validated against the Verifiable Credential data model. Any syntactic issue will raise an error here.
 
 **Semantic verification** validates the credential subject `@type` against the loaded ontologies. This is active by default and catches type mismatches early.
 
-**Schema validation ** (when enabled) checks the uploaded Self-Descriptions against a composite schema of type SHACL.
-If a Self-Description does not conform to the composite schema, a verification exception is thrown with a message containing the validation report. In that case, the verification process does not proceed, and claims are not extracted.
-Automatic schema validation against stored SHACL shapes has been **disabled in the upload verification flow**. Self-Descriptions are accepted regardless of their conformity to stored SHACL shapes. On-demand schema validation of stored assets against specific SHACL shapes is available through the dedicated `SchemaValidationService` (see <<_schema_validation_service>>).
+**Schema validation ** (when enabled) checks the uploaded credentials against a composite schema of type SHACL.
+If a credential does not conform to the composite schema, a verification exception is thrown with a message containing the validation report. In that case, the verification process does not proceed, and claims are not extracted.
+Automatic schema validation against stored SHACL shapes has been **disabled in the upload verification flow**. Credentials are accepted regardless of their conformity to stored SHACL shapes. On-demand schema validation of stored assets against specific SHACL shapes is available through the dedicated `SchemaValidationService` (see <<_schema_validation_service>>).
 
 NOTE: For backward compatibility, automatic schema validation during upload can be re-enabled via the configuration property `federated-catalogue.verification.schema=true`.
 
-**Cryptographic verification (trust verification)** (when enabled) checks all proofs in the SD: whether the signature, the offered key, and the content match.
-When checking whether the proofs match the Self-Description or the contained Verifiable Credentials, the JSON object is normalized using the Universal RDF Dataset Canonicalization Algorithm URDNA2015footnote:[https://w3c-ccg.github.io/rdf-dataset-canonicalization/spec/#dfn-urdna2015[RDF Dataset Canonicalization. A Standard RDF Dataset Canonicalization Algorithm. W3C, Final Community Group Report 15 October 2022]] as specified by Gaia-X.
-This allows a robust signing of Self-Descriptions.
-The normalization algorithm extracts the RDF graph from the claim to perform the signing.
-Thus, the Self-Description can be changed (in some specific manners) while the signature remains.
+**Cryptographic verification (trust verification)** (when enabled) checks all proofs in the credential: whether the signature, the offered key, and the content match.
+When checking whether the proofs match the credential or the contained Verifiable Credentials, the JSON object is normalized using the Universal RDF Dataset Canonicalization Algorithm URDNA2015footnote:[https://w3c-ccg.github.io/rdf-dataset-canonicalization/spec/#dfn-urdna2015[RDF Dataset Canonicalization. A Standard RDF Dataset Canonicalization Algorithm. W3C, Final Community Group Report 15 October 2022]] as specified by Gaia-X.
+This allows robust signing of credentials.
+The normalization algorithm extracts the RDF graph from the claims to perform the signing.
+Thus, the credential can be changed (in some specific manners) while the signature remains.
 
 When the Gaia-X Trust Framework is additionally enabled, the key is validated against the Gaia-X Trust Anchor Registry to verify a valid trust anchor chain via the `x5u` certificate URL. Without the trust framework, signature verification only proves internal consistency (that a DID controls a key) but cannot establish identity or trust — this is why signature verification is disabled in the default profile (see ADR 3).
 
-Afterwards the claims are extracted from the Self-Description.
-Further, it is checked if all Credential Subjects in the Self-Description affect the same subject.
+Afterwards the claims are extracted from the credential.
+Further, it is checked if all Credential Subjects in the credential affect the same subject.
 
 The flowchart below shows the steps within the verification sequence. Configuration-dependent steps are shown with dashed borders.
 
@@ -1074,7 +1074,7 @@ The flowchart below shows the steps within the verification sequence. Configurat
 sequenceDiagram
     VerificationService --> VerificationService:[Verify Syntax]
     VerificationService --> VerificationService:[Verify Semantic]
-    VerificationService ->> VerificationService:[Extract SD Type]
+    VerificationService ->> VerificationService:[Extract Credential Type]
     opt schema validation enabled
         VerificationService --> VerificationService:[Verify Schema]
     end
@@ -1129,7 +1129,7 @@ flowchart LR
     subgraph six [Legend]
         direction TB
         A(Throws an error if check fails)
-        B([Operation on SD])
+        B([Operation on credential])
         C{{Configuration-dependent step}}
     end
 ....

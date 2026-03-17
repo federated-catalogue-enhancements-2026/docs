@@ -16,8 +16,8 @@ The following table shortly lists the Stakeholders for the federated catalogue:
 |===
 | Stakeholder | Description
 | Federator | Responsible for operating the Federated Catalogue.
-| Participant (in a Federation), typically in the Provider role | Onboarded entity, according to http://docs.gaia-x.eu/technical-committee/architecture-document/latest/conceptual_model/#participants[this] definition. A Participant has a Gaia-X Self-Description.
-| Provider | Special type of _Participant_, who might submit Self-Descriptions to the Catalogue.
+| Participant (in a Federation), typically in the Provider role | Onboarded entity, according to http://docs.gaia-x.eu/technical-committee/architecture-document/latest/conceptual_model/#participants[this] definition. A Participant has a Gaia-X credential.
+| Provider | Special type of _Participant_, who might submit credentials to the Catalogue.
 | Consumer | Special type of _Participant_, who can consume services in Gaia-X
 | User | Usually a person action on behalf of a _Participant_. A users interacts (maybe with the help of other components, like the portal) with the federated catalogue. The accessible endpoints depend on the rule, a user has.
 |===
