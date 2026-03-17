@@ -109,7 +109,7 @@ to semantically verify the credential, meaning only the shapes graphs contain co
 The ontology graphs (including the controlled vocabularies) are solely used to give more context to the information model which is used by the credential.
 To support a good governance of the uploaded schema files, we enforce a few integrity constraints w.r.t. all schema files via the _SD-Sch-NF-*_ acceptance criteria.
 
-==== Non-RDF Schemas (CAT-FR-SF-01)
+==== Non-RDF Schemas
 
 In addition to RDF-based schemas, the catalogue supports storage of **non-RDF schemas**: JSON Schemafootnote:[https://json-schema.org/draft/2020-12/json-schema-core[JSON Schema Draft 2020-12]] (`application/schema+json`) and XML Schemafootnote:[https://www.w3.org/TR/xmlschema11-1/[W3C XML Schema Definition Language (XSD) 1.1]] (`application/xml`).
 
