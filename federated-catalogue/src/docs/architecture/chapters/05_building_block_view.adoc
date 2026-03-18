@@ -13,13 +13,13 @@ ifndef::imagesdir[:imagesdir: ../../images]
 == Overall System overview
 This document describes the architecture of the Federated Catalogue, a component inside the Gaia-X Ecosystem. It is a component of the Gaia-X Federation Services defined by the GXFS-DE project.
 
-The Federated Catalogue is used to store and index Self-Descriptions and to answer queries over this index. The basic integration into the Federation Services is shown in <<system_overview>>.
+The Federated Catalogue is used to store and index assets (including credentials and non-RDF files) and to answer queries over this index. The basic integration into the Federation Services is shown in <<system_overview>>.
 
 The Catalogue is not directly accessed by end usersfootnote:[Here, this term comprises users outside a Gaia-X Ecosystem, i.e., what the Gaia-X Architecture Document calls End Users, a well as individual users acting on behalf of a Participant.]. The Catalogue offers an API, which might be used, e.g., from a Gaia-X Portal (offering a graphical user interface for end users).
 
 Authentication within the Federation is realized by a dedicated component. It is not part of the Federated Catalogue. To demonstrate the integration, the Federated Catalogue offers an Authentication component, based on common, off the shelf software (see section <<_authentication>>).
 
-The Federated Catalogue offers the possibility to verify Self-Descriptions. The verification pipeline consists of four independently configurable stages: syntactic parsing, semantic validation, schema validation (SHACL), and cryptographic signature verification. Each stage can be enabled or disabled via configuration properties.
+The Federated Catalogue offers the possibility to verify credentials (Verifiable Presentations / Verifiable Credentials). The verification pipeline consists of four independently configurable stages: syntactic parsing, semantic validation, schema validation (SHACL), and cryptographic signature verification. Each stage can be enabled or disabled via configuration properties.
 
 The catalogue supports two deployment profiles (see <<_verification_profiles>>):
 
@@ -44,9 +44,9 @@ The components are
 | **Name** | **Responsibility**
 | Catalogue | Main component, implementing the core catalogue functionality.
 | Authentication | External component implementing the authentication flow and user management.
-| Graph-DB | Graph database, holding all claims contained in active Self-Descriptions. The Graph database is responsible for executing semantic search queries.
-| File Store | The File Store is a blob storage. It holds Self-Description files, Schema files, and non-RDF assets. This includes historical versions of Self-Descriptions and Schemas. Non-RDF assets are stored in a dedicated File Store instance, separate from schema and context caches.
-| Metadata Store | Store for metadata on Self-Descriptions, Schemas, and non-RDF assets stored in the File Store.
+| Graph-DB | Graph database, holding all claims contained in active credentials. The Graph database is responsible for executing semantic search queries.
+| File Store | The File Store is a blob storage. It holds credential files, Schema files, and non-RDF assets. This includes historical versions of credentials and Schemas. Non-RDF assets are stored in a dedicated File Store instance, separate from schema and context caches.
+| Metadata Store | Store for metadata on assets (credentials, Schemas, and non-RDF files) stored in the File Store.
 |===
 
 ==== Catalogue
@@ -69,15 +69,15 @@ An alternative implementation would be Lissifootnote:[https://lissi.id/[Lissi - 
 
 ==== Graph database
 
-The graph database holds the claims of verified, active Self-Descriptions. Claims of Self-Descriptions that fail the verification are not added to the graph database. Claims of Deprecated, Expired or Revoked Self-Descriptions will be deleted from the Graph database.
+The graph database holds the claims of possibly verified, active RDF assets. In strict configuration mode, claims of credentials that fail verification are not added to the graph database. Claims of Deprecated, Expired or Revoked assets will be deleted from the Graph database.
 
-The Graph Database can be considered as a kind of search index. The single source of truth are the active Self-Descriptions, stored in the File Store. This means at any point in time the Graph database can be rebuilt from scratch by reimporting the claims of the Self-Descriptions. This allows the following:
+The Graph Database can be considered as a kind of search index. The single source of truth are the active credentials, stored in the File Store. This means at any point in time the Graph database can be rebuilt from scratch by reimporting the claims of the credentials. This allows the following:
 
-. **Backup**: An explicit backup of the Graph database is not needed. Backing up the Self-Description files (located in the File Storage) and the metadata (located in the Metadata Store) is sufficient to allow the rebuild of the Graph Database.
+. **Backup**: An explicit backup of the Graph database is not needed. Backing up the asset files (located in the File Storage) and the metadata (located in the Metadata Store) is sufficient to allow the rebuild of the Graph Database.
 
-. **Scalability**: Querying the Graph database might be the most critical part regarding performance. Therefore, the Graph Database can be replicated in the future by multiple, independent instances. Since there are no strict consistency requirements, changes in the Graph can be applied independently. In the control flow, all write operations on Self-Descriptions pass the Metadata Store. Therefore, the consistency can be enforced by that database.
+. **Scalability**: Querying the Graph database might be the most critical part regarding performance. Therefore, the Graph Database can be replicated in the future by multiple, independent instances. Since there are no strict consistency requirements, changes in the Graph can be applied independently. In the control flow, all write operations on assets pass the Metadata Store. Therefore, the consistency can be enforced by that database.
 
-Generically returning the Self-Description files containing claims that influence query response is not possible. To get the relevant Self-Description files, the query to the Graph Database can be formulated to return the Gaia-X entity that is the __credentialSubject__ of a Verifiable Credential. Then this can be used as a filter for the Self-Description endpoint, to download the Self-Description file.
+Generically returning the credential files containing claims that influence query response is not possible. To get the relevant credential files, the query to the Graph Database can be formulated to return the trust framework entity that is the __credentialSubject__ of a Verifiable Credential. Then this can be used as a filter for the assets endpoint, to download the credential file.
 
 The graph database backend is **pluggable**. The implementation is selected via the `graphstore.impl` configuration property:
 
@@ -96,7 +96,7 @@ Both backends implement the same `GraphStore` interface. Core services contain n
 [IMPORTANT]
 .Limitation: queries to non-Enterprise Neo4j Graph database return empty record when no results found, rather than empty list.
 ====
-When there is no data in the Graph database, i.e., no claims extracted from Self-Description, there is still a configuration node for the neosemantics modulefootnote:[https://neo4j.com/labs/neosemantics/4.0/config/[Configuring Neo4j to use RDF data]], which enables Neo4j to support the RDF data model, which is required here.
+When there is no data in the Graph database, i.e., no claims extracted from credentials, there is still a configuration node for the neosemantics modulefootnote:[https://neo4j.com/labs/neosemantics/4.0/config/[Configuring Neo4j to use RDF data]], which enables Neo4j to support the RDF data model, which is required here.
 openCypher queries over all nodes without a +WHERE+ clause or without specifying relationships always return this node, unless regular users are revoked access from the configuration node as follows:
 [source,cypher]
 ----
@@ -111,14 +111,14 @@ We chose not to implement a workaround that involves query rewriting, as this ma
 The Fuseki backend uses Apache Jena with RDF-star. Claims are stored as RDF-star triple nodes: `<< subject predicate object >> cred:credentialSubject credentialSubjectUri`. Queries must use SPARQL-star syntax. Results are shuffled unless the query contains an `ORDER BY` clause.
 
 ==== File Store
-The File Store is responsible to persist all file based content submitted to the catalogue. These are Self-Descriptions, Schemas, and non-RDF assets.
+The File Store is responsible to persist all file based content submitted to the catalogue. These are credentials (Verifiable Presentations or standalone Verifiable Credentials), Schemas, and non-RDF assets.
 
 Non-RDF assets are stored in a dedicated File Store instance (`assetFileStore`), configured via `federated-catalogue.file-store.asset.location`. This keeps asset blobs separate from schema definitions and context caches for operational clarity. In production (`scope=runtime`), the asset location must be explicitly configured; the application fails to start if it is missing.
 
 For the sake of simplicity, a folder in the file system is used as file store. For future scalability the file store can be simply realized using an Object Storage or Database.
 
 ==== Metadata Store
-The Metadata Store persists the metadata for the elements (Self-Descriptions, Schemas, Trust Anchors, and non-RDF assets). It allows to efficiently identify the relevant files in the file storage, to process the incoming requests.
+The Metadata Store persists the metadata for the elements (assets, Schemas, Trust Anchors). It allows to efficiently identify the relevant files in the file storage, to process the incoming requests.
 
 It is realized as relational database (e.g., PostgreSQL or MariaDB). Since all write requests are handled by the database, the transactional functionality guarantees the consistency of the data.
 
@@ -136,13 +136,13 @@ The catalogue implementation is structured into two main components _fc-service-
 | Authorization | Handling the authorization, and user management in combination with the _Service_ and _Authentication_ component.
 | Authentication | This component stores the users and participant metadata.
 | Verification
-a| Responsible for applying the defined verification rules on the Self-Descriptions and extracting claims from Verifiable Presentations.
+a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims.
 
-* **Verification pipeline:** Syntactic, semantic, and cryptographic verification of Self-Descriptions. The SD is checked as a whole — if VC verification fails, the entire SD verification fails.
+* **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
 * **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `VerificationStrategy` implementation (currently `CredentialVerificationStrategy`).
 * **Schema Validation Service:** Automatic SHACL schema validation has been disabled in the upload flow and extracted to a dedicated service.
-* **Revalidation Service:** Periodically revalidates submitted Self-Descriptions.
-* **Claim Extractor:** Extracts claims from Verifiable Presentations.
+* **Revalidation Service:** Periodically revalidates submitted credentials.
+* **Claim Extractor:** Extracts claims from Verifiable Presentations and standalone Verifiable Credentials.
 | Graph Store | Interface and logic for communicating with the Graph DB.
 
 | Schema Store
@@ -154,7 +154,7 @@ a| Responsible for:
 * Handling the lifecycle and versioning of Schemas (persisted in the Metadata Store)
 
 | Validator Cache | Component to store cached public keys. The keys were checked and validated when they were retrieved. To avoid expired public keys in the cache the deprecation date is regularly checked.
-| Self-Description Store | Storing and retrieving of Self-Description files and non-RDF assets, and handling their lifecycle and versioning. Self-Descriptions and assets are stored in the File Store, whereas metadata is kept in the Metadata Store. Non-RDF assets bypass verification and graph storage.
+| Asset Store | Storing and retrieving of credential files and non-RDF assets, and handling their lifecycle and versioning. Assets are stored in the File Store, whereas metadata is kept in the Metadata Store. Non-RDF assets bypass verification and graph storage.
 | RDF Detector | Classifies uploaded content as RDF or non-RDF based on a configurable MIME type allowlist and content inspection (JSON-LD `@context` pattern matching for `application/json`).
 | Asset Upload Service | Orchestrates the dual-path upload flow: extracts request data, delegates to `RdfDetector` for classification, then routes to either the verification pipeline (RDF) or direct asset storage (non-RDF).
 | Metadata Store | Database keeping all the required metadata for the modules. The Metadata Store is _owned_ by the _Store_ components. For separation, each component gets its own set of tables with no relation between them.
@@ -165,7 +165,7 @@ a| Responsible for:
 ==== Controller
 The Controller component is responsible for parsing external (HTTP) requests and handling the Authentication flow with the Authentication service. It receives the results from the Services, formats them as appropriate, and sends the formatted results back to the original requester.
 
-It is implemented as Spring Controllers.
+It is implemented as Spring Controllers. The `AssetsApiDelegate` (generated from the OpenAPI spec) handles all `/assets` endpoints. The `AssetUploadController` handles multipart and binary uploads.
 
 The interface is a REST API. All defined endpoints, are available in the corresponding openAPI https://gitlab.com/gaia-x/data-infrastructure-federation-services/cat/fc-service/-/blob/main/openapi/fc_openapi.yaml[definition].
 
@@ -178,15 +178,15 @@ The authorization component is highly coupled with the _Controller_. It ensures 
 
 ===== Fine-Grained Permissions
 
-Self-description, schema, and query endpoint access is controlled by fine-grained permissions:
+Asset, schema, and query endpoint access is controlled by fine-grained permissions:
 
 [options="header",cols="1,2"]
 |===
 | Permission | Grants access to
-| ASSET_CREATE | Create self-descriptions and upload assets
-| ASSET_READ | Read and list self-descriptions and assets
-| ASSET_UPDATE | Revoke self-descriptions
-| ASSET_DELETE | Delete self-descriptions and assets
+| ASSET_CREATE | Create assets (credentials and non-RDF uploads)
+| ASSET_READ | Read and list assets
+| ASSET_UPDATE | Revoke assets
+| ASSET_DELETE | Delete assets
 | SCHEMA_CREATE | Create schemas
 | SCHEMA_READ | Read and list schemas
 | SCHEMA_UPDATE | Update schemas
@@ -206,7 +206,7 @@ For convenience and backward compatibility, composite roles bundle multiple perm
 | Role ID | Role Name | Included Permissions
 | Ro-MU-CA | Catalogue Administrator | ADMIN_ALL (all permissions)
 | Ro-MU-A | Participant Administrator | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
-| Ro-SD-A | Self-Description Administrator | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
+| Ro-AS-A | Asset Administratorfootnote:[Renamed from `Ro-SD-A` (Self-Description Administrator).] | ASSET_CREATE, ASSET_READ, ASSET_UPDATE, ASSET_DELETE, SCHEMA_READ
 | Ro-PA-A | Participant User Administrator | _(used for participant/user management only)_
 |===
 
@@ -230,29 +230,29 @@ The Core Services receive calls from the service component and provide the build
 
 ==== Verification Service
 
-The SD verification component checks if a Self-Description is correct from a semantic and cryptographic standpoint.
+The verification component checks if a credential (Verifiable Presentation or standalone Verifiable Credential) is correct from a semantic and cryptographic standpoint.
 
-The flow for verifying Self-Descriptions is described in more detail in section <<_verify_self_description>>.
+The flow for verifying credentials is described in more detail in section <<_verify_credential>>.
 
 Notes:
 
-* The SD is checked as a whole. If the verification of the VCs fails, the verification of the whole SD fails.
+* The credential is checked as a whole. If the verification of the VCs fails, the verification of the whole credential fails.
 
 [mermaid, width=2000]
 ....
 classDiagram
     class VerificationService {
         <<interface>>
-        +verifyParticipantSelfDescription(payload) VerificationResultParticipant
-        +verifyOfferingSelfDescription(payload) VerificationResultOffering
-        +verifyResourceSelfDescription(payload) VerificationResultResource
-        +verifySelfDescription(payload) VerificationResult
-        +verifySelfDescription(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) VerificationResult
-        +extractClaims(payload) List~SdClaim~
-        +verifySelfDescriptionAgainstSchema(payload, schema) SchemaValidationResult
-        +verifySelfDescriptionAgainstCompositeSchema(payload) SchemaValidationResult
+        +verifyParticipantCredential(payload) CredentialVerificationResultParticipant
+        +verifyOfferingCredential(payload) CredentialVerificationResultOffering
+        +verifyResourceCredential(payload) CredentialVerificationResultResource
+        +verifyCredential(payload) CredentialVerificationResult
+        +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) CredentialVerificationResult
+        +extractClaims(payload) List~CredentialClaim~
+        +verifyCredentialAgainstSchema(payload, schema) SchemaValidationResult
+        +verifyCredentialAgainstCompositeSchema(payload) SchemaValidationResult
     }
-    note for VerificationService "verifySelfDescriptionAgainstSchema and\nverifySelfDescriptionAgainstCompositeSchema\nare deprecated — use SchemaValidationService directly"
+    note for VerificationService "verifyCredentialAgainstSchema and\nverifyCredentialAgainstCompositeSchema\nare deprecated — use SchemaValidationService directly"
 ....
 
 [#_verification_strategy_pattern]
@@ -274,14 +274,14 @@ classDiagram
     }
     class VerificationStrategy {
         <<interface>>
-        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
-        +extractClaims(payload) List~SdClaim~
+        +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
+        +extractClaims(payload) List~CredentialClaim~
         +setBaseClassUri(baseClass, uri) void
     }
     class CredentialVerificationStrategy {
         -filter: ProtectedNamespaceFilter
-        +extractClaims(payload) List~SdClaim~
-        +verifySelfDescription(payload, strict, expectedClass, flags) VerificationResult
+        +extractClaims(payload) List~CredentialClaim~
+        +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
     }
     VerificationServiceImpl --> VerificationStrategy : delegates to
     VerificationStrategy <|.. CredentialVerificationStrategy
@@ -290,12 +290,12 @@ classDiagram
 
 `VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety. The `resolveStrategy(ContentAccessor)` method currently always resolves to `CredentialVerificationStrategy`.
 
-`CredentialVerificationStrategy` implements all verification and claim extraction logic. In `verifySelfDescription()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the `VerificationResult`. The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+`CredentialVerificationStrategy` implements all verification and claim extraction logic. In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the `CredentialVerificationResult`. The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
 
 [[_protected_namespace_filter]]
 ===== Protected Namespace Filter
 
-The `ProtectedNamespaceFilter` prevents external actors from injecting triples that use the catalogue's reserved internal metadata namespace. Any such triples present in externally submitted self-descriptions or schemas are silently removed before storage or further processing.
+The `ProtectedNamespaceFilter` prevents external actors from injecting triples that use the catalogue's reserved internal metadata namespace. Any such triples present in externally submitted credentials or schemas are silently removed before storage or further processing.
 
 The protected namespace is:
 
@@ -312,9 +312,9 @@ The filter is applied at three ingestion boundaries:
 [options="header",cols="2,3"]
 |===
 | Boundary | Integration point
-| Self-Description upload and claim extraction | `CredentialVerificationStrategy.verifySelfDescription()` — explicitly calls `filterClaims()` after claim extraction; propagates filter warnings to `VerificationResult.warnings`.
+| Credential upload and claim extraction | `CredentialVerificationStrategy.verifyCredential()` — explicitly calls `filterClaims()` after claim extraction; propagates filter warnings to `CredentialVerificationResult.warnings`.
 | Schema import and update (`POST /schemas`, `PUT /schemas/{id}`) | `SchemaStoreImpl.analyzeSchema()` — calls `filterModel()` on the parsed Jena RDF model before schema analysis proceeds; propagates filter warnings to `SchemaResult.warnings` in the API response.
-| Graph rebuild (`POST /actuator/graph-rebuild`) | `GraphRebuilder.addSdToGraph()` — explicitly calls `filterClaims()` after re-extracting claims from stored self-descriptions, ensuring the rebuilt graph is clean.
+| Graph rebuild (`POST /actuator/graph-rebuild`) | `GraphRebuilder.addAssetToGraph()` — explicitly calls `filterClaims()` after re-extracting claims from stored credentials, ensuring the rebuilt graph is clean.
 |===
 
 [mermaid, width=2000]
@@ -325,7 +325,7 @@ classDiagram
         +filterModel(model, source) FilteredModel
     }
     class FilteredClaims {
-        +claims() List~SdClaim~
+        +claims() List~CredentialClaim~
         +warning() String
         +hasWarning() boolean
     }
@@ -391,8 +391,8 @@ Automatic schema validation has been **disabled in the upload verification flow*
 classDiagram
     class SchemaValidationService {
         <<interface>>
-        +validateSelfDescriptionAgainstSchema(payload, schema) SchemaValidationResult
-        +validateSelfDescriptionAgainstCompositeSchema(payload) SchemaValidationResult
+        +validateCredentialAgainstSchema(payload, schema) SchemaValidationResult
+        +validateCredentialAgainstCompositeSchema(payload) SchemaValidationResult
         +validateClaimsAgainstSchema(claims, schema) SchemaValidationResult
         +validateClaimsAgainstCompositeSchema(claims) SchemaValidationResult
     }
@@ -400,28 +400,28 @@ classDiagram
 
 ===== Revalidation Service
 
-This component periodically revalidates existing Self-Descriptions. It checks if the signatures are still valid (e.g. not expired or referencing DID is still available). If the validation of a Self-Description fails, it's either set to state _deprecated_ or _eol_. This will remove the Self-Description from the Graph Database.
+This component periodically revalidates existing credentials. It checks if the signatures are still valid (e.g. not expired or referencing DID is still available). If the validation of a credential fails, it's either set to state _deprecated_ or _eol_. This will remove the credential from the Graph Database.
 
 Semantic revalidation is not needed here. Schema revalidation against SHACL shapes is performed by the `SchemaValidationService` every time a new Schema is added or updated.
 
 ===== Claim Extractor
 
-This component is used by the _Verification Service_ to extract Claims from Self-Descriptions. Those claims are returned by the _Verification Service_ in the _Verification Result_.
+This component is used by the _Verification Service_ to extract Claims from credentials. Those claims are returned by the _Verification Service_ in the _CredentialVerificationResult_.
 
 Claims pass through the `ProtectedNamespaceFilter` before being returned (see <<_protected_namespace_filter>>). Triples referencing the internal `fcmeta:` namespace are removed at this stage, so the graph store never receives externally injected internal metadata. If any triples are filtered, a user-visible warning is included in the API response.
 
 ==== Graph Store
 
-The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from Self-Descriptions) and adds them to the graph database. The Graph Database only contains claims from active Self-Descriptions and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database. Additionally, the interface provides health-check and claim-count methods used by the Spring Boot health indicator and the startup auto-rebuild mechanism.
+The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from credentials) and adds them to the graph database. The Graph Database only contains claims from active credentials and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database. Additionally, the interface provides health-check and claim-count methods used by the Spring Boot health indicator and the startup auto-rebuild mechanism.
 
 A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`).
 
-Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active Self-Descriptions into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
+Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active credentials into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
 
 [source,java]
 ----
 /**
- * Defines the required functions to add, query, update and delete active claims extracted from self-descriptions
+ * Defines the required functions to add, query, update and delete active claims extracted from credentials
  */
 public interface GraphStore {
 
@@ -431,14 +431,14 @@ public interface GraphStore {
      * objects containing subject, predicate and object similar to the form of n-triples
      * format stored in individual strings.
      *
-     * @param sdClaimList List of claims to be added to the Graph DB.
-     * @param credentialSubject contains a self-description unique identifier
+     * @param claimList List of claims to be added to the Graph DB.
+     * @param credentialSubject contains a credential unique identifier
      */
-    void addClaims(List<SdClaim> sdClaimList, String credentialSubject);
+    void addClaims(List<CredentialClaim> claimList, String credentialSubject);
 
     /**
-     * Deletes all claims in the Graph DB of a given self-description
-     * @param credentialSubject contains a self-description unique identifier
+     * Deletes all claims in the Graph DB of a given credential
+     * @param credentialSubject contains a credential unique identifier
      */
     void deleteClaims(String credentialSubject);
 
@@ -446,44 +446,50 @@ public interface GraphStore {
      * Query the graph when query is passed in query object and this
      * returns list of Maps with key value pairs as a result.
      *
-     * @param sdQuery is the query to be executed
+     * @param query is the query to be executed
      * @return List of Maps
      */
-    PaginatedResults<Map<String, Object>> queryData(GraphQuery sdQuery);
+    PaginatedResults<Map<String, Object>> queryData(GraphQuery query);
 
     /**
      * Returns the query language supported by this graph store implementation.
      *
-     * @return the supported QueryLanguage, or null if the store is disabled
+     * @return the supported {@link QueryLanguage}, or empty if the store is disabled
      */
-    default QueryLanguage getSupportedQueryLanguage() {
-        return null;
-    }
+    Optional<QueryLanguage> getSupportedQueryLanguage();
 
     /**
      * Returns the type of graph database backend.
      *
-     * @return the GraphBackendType of this store
+     * @return the {@link GraphBackendType} of this store
      */
-    default GraphBackendType getBackendType() {
-        return GraphBackendType.NONE;
-    }
+    GraphBackendType getBackendType();
 
     /**
      * Checks whether the graph store backend is reachable and operational.
      *
-     * @return true if the backend is healthy, false otherwise
+     * @return {@code true} if the backend is healthy, {@code false} otherwise
      */
-    default boolean isHealthy() {
-        return true;
-    }
+    boolean isHealthy();
 
     /**
      * Returns the number of claim entries currently stored in the graph database.
      *
-     * @return the claim count, or 0 if the store is empty or disabled
+     * @return the claim count (&ge; 0), or {@code -1} if the count could not be
+     *         determined. The default implementation returns {@code 0}.
      */
     default long getClaimCount() {
+        return 0;
+    }
+
+    /**
+     * Returns the number of distinct RDF-assets whose claims are stored
+     * in the graph database. Counts unique credential subjects.
+     *
+     * @return the asset count (&ge; 0), or {@code -1} if the count could not be
+     *         determined. The default implementation returns {@code 0}.
+     */
+    default long getRDFAssetCountInGraph() {
         return 0;
     }
 
@@ -491,164 +497,168 @@ public interface GraphStore {
 ----
 
 
-==== Self-Description Store
+==== Asset Store
 
-The Self-Description Store is responsible for storing Self-Description files (whole files, not individual VCs), non-RDF assets, and their metadata.
+The Asset Store is responsible for storing credential files (whole files, not individual VCs), non-RDF assets, and their metadata.
 
-For **RDF Self-Descriptions**, the store first saves the metadata in the Metadata Store, then adds claims to the Graph database, and finally stores the file in the File Store. A transaction ensures that the stored data is consistent.
+For **credentials (RDF)**, the store first saves the metadata in the Metadata Store, then adds claims to the Graph database, and finally stores the file in the File Store. A transaction ensures that the stored data is consistent.
 
 For **non-RDF assets**, the store skips verification and graph interaction entirely. It stores metadata in the Metadata Store (with `content_type`, `file_size`, and `original_filename`), writes the raw bytes to the asset File Store, and auto-generates a content-addressable identifier (`urn:asset:sha256:<hash>`).
 
 [source,java]
 ----
 /**
- * A store for storing and retrieving self-description meta data objects.
+ * A store for storing and retrieving asset meta data objects.
  *
  * @author hylke
  * @author j_reuter
  */
-public interface SelfDescriptionStore {
+public interface AssetStore {
   /**
-   * Fetch a self-description file by its hash value.
+   * Fetch an asset file by its hash value.
    *
-   * @param hash The hash value that identifies the self-description meta data.
-   * @return The self-description file.
+   * @param hash The hash value that identifies the asset.
+   * @return The asset file.
    */
-  ContentAccessor getSDFileByHash(String hash);
+  ContentAccessor getFileByHash(String hash);
 
   /**
-   * Fetch a self-description and its meta data by its hash value.
+   * Fetch an asset and its meta data by its hash value.
    *
-   * @param hash The hash value that identifies the self-description meta data.
-   * @return The self-description meta data object with the specified hash value.
+   * @param hash The hash value that identifies the asset meta data.
+   * @return The asset meta data object with the specified hash value.
    */
-  SelfDescriptionMetadata getByHash(String hash);
+  AssetMetadata getByHash(String hash);
 
   /**
-   * Fetch all self-descriptions that match the filter parameters.
+   * Fetch all assets that match the filter parameters.
    *
-   * @param filter The filter to match all self-descriptions against.
-   * @param withMeta flax indicating the full metaData of the SD should be loaded instead of just the hash.
-   * @param withContent flag indicating the content of the SelfDescription should also be returned.
-   * @return List of all self-description meta-data objects that match the specified filter.
+   * @param filter The filter to match all assets against.
+   * @param withMeta flag indicating the full metaData should be loaded instead of just the hash.
+   * @param withContent flag indicating the content should also be returned.
+   * @return List of all asset meta-data objects that match the specified filter.
    */
-  PaginatedResults<SelfDescriptionMetadata> getByFilter(SdFilter filter, boolean withMeta, boolean withContent);
+  PaginatedResults<AssetMetadata> getByFilter(AssetFilter filter, boolean withMeta, boolean withContent);
 
   /**
-   * Store the given self-description.
+   * Store the given credential (Verifiable Presentation or standalone Verifiable Credential).
    *
-   * @param selfDescription       The self-description to store.
-   * @param sdVerificationResults The results of the verification of the
-   *                              self-description.
+   * @param credential            The credential metadata to store.
+   * @param verificationResults   The results of the verification of the credential.
    */
-  void storeSelfDescription(SelfDescriptionMetadata selfDescription, VerificationResult sdVerificationResults);
+  void storeCredential(AssetMetadata credential, CredentialVerificationResult verificationResults);
 
   /**
-   * Change the life cycle status of the self-description with the given hash.
+   * Change the life cycle status of the asset with the given hash.
    *
-   * @param hash         The hash of the self-description to work on.
+   * @param hash         The hash of the asset to work on.
    * @param targetStatus The new status.
    */
-  void changeLifeCycleStatus(String hash, SelfDescriptionStatus targetStatus);
+  void changeLifeCycleStatus(String hash, AssetStatus targetStatus);
 
   /**
-   * Remove the self-description with the given hash from the store.
+   * Remove the asset with the given hash from the store.
    *
-   * @param hash The hash of the self-description to work on.
+   * @param hash The hash of the asset to work on.
    */
-  void deleteSelfDescription(String hash);
+  void deleteAsset(String hash);
 
   /**
    * Store a non-RDF asset. Bypasses verification and graph storage.
    * Writes metadata to the Metadata Store and content to the asset File Store.
    *
-   * @param sdMetadata The asset metadata (hash, content type, file size, content accessor).
+   * @param assetMetadata The asset metadata (hash, content type, file size, content accessor).
    * @param originalFilename The original filename from the upload (may be null).
    * @return The stored metadata with auto-generated subject ID.
    * @throws ConflictException if an asset with the same hash already exists.
    */
-  SelfDescriptionMetadata storeAsset(SelfDescriptionMetadata sdMetadata, String originalFilename);
+  AssetMetadata storeUnverified(AssetMetadata assetMetadata, String originalFilename);
 
   /**
-   * Invalidate expired Self-descriptions in the store.
+   * Invalidate expired assets in the store.
    *
-   * @return Number of expired Self-descriptions found.
+   * @return Number of expired assets found.
    */
-  int invalidateSelfDescriptions();
+  int invalidateExpiredAssets();
 
   /**
-   * Get "count" hashes of active self-descriptions, ordered by sdhash, after
+   * Get "count" hashes of active assets, ordered by asset_hash, after
    * the given hash. Chunking is done using:
-   * <pre>hashtext(sdhash) % chunks = chunkId</pre>
+   * <pre>hashtext(asset_hash) % chunks = chunkId</pre>
    *
    * @param afterHash The last hash of the previous batch.
    * @param count the number of hashes to retrieve.
    * @param chunks the number of chunks to subdivide hashes into.
    * @param chunkId the 0-based id of the chunk to get.
-   * @return the list of hashes coming after the hash "afterHash", odered by
+   * @return the list of hashes coming after the hash "afterHash", ordered by
    * hash.
    */
-  List<String> getActiveSdHashes(String afterHash, int count, int chunks, int chunkId);
+  List<String> getActiveAssetHashes(String afterHash, int count, int chunks, int chunkId);
+
+  /**
+   * Remove all assets from the AssetStore.
+   */
+  void clear();
 
 }
 
 
 /**
- * Filter parameters for searching self-description meta data. If multiple items
+ * Filter parameters for searching asset meta data. If multiple items
  * are present, they are combined with an 'AND' semantic.
  */
-public class SdFilter {
+public class AssetFilter {
 
   /**
-   * Start time for the time range filter when the self-description was uploaded
+   * Start time for the time range filter when the asset was uploaded
    * to the catalogue.
    */
   private Instant uploadTimeStart;
 
   /**
-   * End time for the time range filter when the self-description was uploaded to
+   * End time for the time range filter when the asset was uploaded to
    * the catalogue.
    */
   private Instant uploadTimeEnd;
 
   /**
-   * Start time for the time range filter when the status of the self-description
+   * Start time for the time range filter when the status of the asset
    * was last changed in the catalogue.
    */
   private Instant statusTimeStart;
 
   /**
-   * End time for the time range filter when the status of the self-description
+   * End time for the time range filter when the status of the asset
    * was last changed in the catalogue.
    */
   private Instant statusTimeEnd;
 
   /**
-   * Filter for the issuer of the self-description. This is the unique ID
+   * Filter for the issuer of the asset. This is the unique ID
    * (credentialSubject) of the Participant that has prepared the
-   * self-description.
+   * asset.
    */
   private List<String> issuers;
 
   /**
-   * Filter for a validator of the self-description. This is the unique ID
+   * Filter for a validator of the asset. This is the unique ID
    * (credentialSubject) of the Participant that validated (part of) the
-   * self-description.
+   * asset.
    */
   private List<String> validators;
 
   /**
-   * Filter for the status of the self-description.
+   * Filter for the status of the asset.
    */
-  private List<SelfDescriptionStatus> statuses;
+  private List<AssetStatus> statuses;
 
   /**
-   * Filter for a id/credentialSubject of the self-description.
+   * Filter for a id/credentialSubject of the asset.
    */
   private List<String> ids;
 
   /**
-   * Filter for a hash of the self-description.
+   * Filter for a hash of the asset.
    */
   private List<String> hashes;
 
@@ -664,17 +674,17 @@ public class SdFilter {
   private int limit;
 
   /**
-   * Sets the upload time range that the filter will check for a self-description
-   * record to match. The upload time specifies when the self-description was
+   * Sets the upload time range that the filter will check for an asset
+   * record to match. The upload time specifies when the asset was
    * uploaded to the catalogue. Start time and end time must be either both
    * {@code null} or both non-{@code null}. Note: For not imposing any upper limit
    * in time, {@code Instant.MAX} is <em>not</em> usable, since Hibernate will not
    * accept this value and throw an exception.
    *
    * @param uploadTimeStart Start time of the time range that this filter will
-   *                        check for a self-description record to match.
+   *                        check for an asset record to match.
    * @param uploadTimeEnd   End time of the time range that this filter will check
-   *                        for a self-description record to match.
+   *                        for an asset record to match.
    * @throws IllegalArgumentException If either start time or end time is
    *                                  {@code null}, while the other is
    *                                  non-{@code null}.
@@ -682,48 +692,44 @@ public class SdFilter {
   public void setUploadTimeRange(final Instant uploadTimeStart, final Instant uploadTimeEnd);
 
   /**
-   * Sets the status time range that the filter will check for a self-description
-   * record to match. The status time specifies when the self-description was last
+   * Sets the status time range that the filter will check for an asset
+   * record to match. The status time specifies when the asset was last
    * changed in the catalogue. Start time and end time must be either both
    * {@code null} or both non-{@code null}. Note: For not imposing any upper limit
    * in time, {@code Instant.MAX} is <em>not</em> usable, since Hibernate will not
    * accept this value and throw an exception.
    *
    * @param statusTimeStart Start time of the time range that this filter will
-   *                        check for a self-description record to match.
+   *                        check for an asset record to match.
    * @param statusTimeEnd   End time of the time range that this filter will check
-   *                        for a self-description record to match.
+   *                        for an asset record to match.
    */
   public void setStatusTimeRange(final Instant statusTimeStart, final Instant statusTimeEnd);
 }
 ----
 
-The Self-Description metadata is stored in the metadata store, using the following data model:
+The asset metadata is stored in the metadata store, using the following data model:
 
 
-image:05_er_sdfile.png[ER Diagram representing a Self-Description]
-////
-This is the source code for the figure above. Directly added the figure due to a bug in mmdc
-[mermaid, width=2000]
-....
-erDiagram
-    SDFILE {
-        VARCHAR sdhash PK
-        VARCHAR subjectid
-        VARCHAR issuer
-        TIMESTAMP uploadtime
-        TIMESTAMP statustime
-        TIMESTAMP expirationtime
-        CLOB content "nullable - NULL for non-RDF assets"
-        VARCHAR[] validators
-        VARCHAR content_type "MIME type (e.g. application/pdf)"
-        BIGINT file_size "asset size in bytes"
-        VARCHAR original_filename "client-provided filename"
-    }
-....
-////
+.ASSET table
+[cols="1,2,1,3", options="header"]
+|===
+| Type | Column | Key | Note
 
-NOTE: The `content` column is nullable. For RDF Self-Descriptions, it stores the JSON-LD credential in the database. For non-RDF assets, content is stored only in the File Store and the database column remains `NULL`. The three asset metadata columns (`content_type`, `file_size`, `original_filename`) are backfilled with `content_type = 'application/ld+json'` for existing records.
+| VARCHAR | asset_hash | PK |
+| VARCHAR | subjectid | |
+| VARCHAR | issuer | |
+| TIMESTAMP | uploadtime | |
+| TIMESTAMP | statustime | |
+| TIMESTAMP | expirationtime | |
+| CLOB | content | | nullable — NULL for non-RDF assets
+| VARCHAR[] | validators | |
+| VARCHAR | content_type | | MIME type (e.g. application/pdf)
+| BIGINT | file_size | | asset size in bytes
+| VARCHAR | original_filename | | client-provided filename
+|===
+
+NOTE: The `content` column is nullable. For credentials (RDF), it stores the JSON-LD in the database. For non-RDF assets, content is stored only in the File Store and the database column remains `NULL`. The three asset metadata columns (`content_type`, `file_size`, `original_filename`) are backfilled with `content_type = 'application/ld+json'` for existing records. The table was renamed from `sdfiles` to `assets` and the primary key from `sdhash` to `asset_hash` (see Liquibase changeset `2026-03-09-rename-sdfiles-to-assets`).
 
 ==== Schema Management Store
 
@@ -868,7 +874,7 @@ erDiagram
 The Validator Cache is responsible for caching Validator keys so they do not need to be downloaded each time.
 It periodically checks the expiration dates of signing keys.
 
-Interface: Receives request from the SD-Verification component.
+Interface: Receives request from the Verification component.
 
 [source,java]
 ----
@@ -966,7 +972,7 @@ flowchart LR
         direction LR
         A(Parse JSON +\nCheck syntax) --> B(Validate against\nJSON-LD Grammar)
         B --> C(Validate against VC standard)
-        C --> D(Extract SD Type)
+        C --> D(Extract Credential Type)
         D --> E([Extract Claims])
         E --> F([Extract Participant])
     end
@@ -998,7 +1004,7 @@ flowchart LR
         direction LR
         A(Parse JSON +\nCheck syntax) --> B(Validate against\nJSON-LD Grammar)
         B --> C(Validate against VC standard)
-        C --> D(Extract SD Type)
+        C --> D(Extract Credential Type)
         D --> E(Validate against\nSHACL shapes)
         E --> F(Verify VP + VC\nsignatures)
         F --> G(Resolve DID +\ncheck public key)
@@ -1063,7 +1069,7 @@ docker compose -f docker-compose.yml -f docker-compose.strict.yml --env-file dev
 [[_non_rdf_asset_upload]]
 ==== Non-RDF Asset Upload
 
-The catalogue supports uploading non-RDF content (PDFs, plain JSON, YAML, images, binary files) through the same `POST /self-descriptions` endpoint, extended to accept `multipart/form-data` and `application/octet-stream` content types.
+The catalogue supports uploading non-RDF content (PDFs, plain JSON, YAML, images, binary files) through the same `POST /assets` endpoint, extended to accept `multipart/form-data` and `application/octet-stream` content types.
 
 ===== RDF Detection
 
@@ -1079,11 +1085,11 @@ The `AssetUploadService` orchestrates the dual-path upload flow:
 [mermaid, width=2000]
 ....
 flowchart TD
-    Upload[POST /self-descriptions] --> Extract[Extract bytes + content type]
+    Upload[POST /assets] --> Extract[Extract bytes + content type]
     Extract --> Detect{RdfDetector:\nis RDF?}
     Detect -->|Yes| Verify[Verification Pipeline]
-    Verify --> StoreCred[storeSelfDescription\nmetadata + claims + graph]
-    Detect -->|No| StoreAsset[storeAsset\nmetadata + FileStore only]
+    Verify --> StoreCred[storeCredential\nmetadata + claims + graph]
+    Detect -->|No| StoreAsset[storeUnverified\nmetadata + FileStore only]
     StoreCred --> Response[201 Created]
     StoreAsset --> Response
 ....
@@ -1109,34 +1115,33 @@ For non-RDF assets:
 
 ==== VerificationResults
 
-Verification results are slightly different depending on whether a Participant Self-Description or a Offering Self-Description is verified.
+Verification results are slightly different depending on whether a Participant credential or an Offering credential is verified.
 
 [source,java]
 ----
 
-public class VerificationResult {
+public class CredentialVerificationResult extends VerificationResult {
 
-  private Instant verificationTimestamp;
+  /** The credential subject ID. */
+  private String id;
 
-  private String lifecycleStatus;
+  /** The claims extracted from the credential. */
+  private List<CredentialClaim> claims;
 
-  private String issuer;
-
-  private Instant issuedDateTime;
-
-  private List<String> validatorDids = new ArrayList<>();
+  /** The validators that signed the credential. */
+  private List<Validator> validators;
 }
 
 /**
  * POJO Class for holding verification results specific to Offerings.
  */
-class VerificationResultsOffering extends VerificationResults {
+class CredentialVerificationResultOffering extends CredentialVerificationResult {
 }
 
 /**
  * POJO Class for holding verification results specific to Participants.
  */
-class VerificationResultsParticipant extends VerificationResults {
+class CredentialVerificationResultParticipant extends CredentialVerificationResult {
   /**
    * The Name of the Participant.
    */
@@ -1148,8 +1153,8 @@ class VerificationResultsParticipant extends VerificationResults {
 }
 ----
 
-Depending on the type of Self-Description, the Participant ID that has to be checked against the user who uploads the Self-Description, is stored in different locations.
-If the Self-Description is a Service Offering, the ID is stored in the `issuer` variable. If the Self-Description is a Participant, the ID is stored in the `id` variable.
+Depending on the type of credential, the Participant ID that has to be checked against the user who uploads the credential, is stored in different locations.
+If the credential is a Service Offering, the ID is stored in the `issuer` variable. If the credential is a Participant, the ID is stored in the `id` variable.
 
 ==== Claim
 
@@ -1158,13 +1163,13 @@ If the Self-Description is a Service Offering, the ID is stored in the `issuer` 
 /**
  * POJO Class for holding a claim.
  */
-public class SdClaim {
+public class CredentialClaim {
 
     private String subject;
     private String predicate;
     private String object;
 
-    public SdClaim(String subject, String predicate, String object) {
+    public CredentialClaim(String subject, String predicate, String object) {
         this.subject = subject;
         this.predicate = predicate;
         this.object = object;
@@ -1190,7 +1195,7 @@ public class SdClaim {
 [source,java]
 ----
 /**
- * POJO Class for holding the validators, that signed the Self-Description.
+ * POJO Class for holding the validators, that signed the credential.
  */
 public class Validator {
     private String didURI;
@@ -1207,7 +1212,7 @@ public class Validator {
 [source,java]
 ----
 /**
- * Accessor class for passing SelfDescription or Schema content. Implementations
+ * Accessor class for passing asset or Schema content. Implementations
  * may use lazy-loading to improve memory use.
  */
 interface ContentAccessor {
@@ -1238,10 +1243,10 @@ interface ContentAccessor {
 
 Two implementations exist:
 
-* `ContentAccessorDirect` — wraps UTF-8 text content (used for RDF Self-Descriptions and Schemas).
+* `ContentAccessorDirect` — wraps UTF-8 text content (used for RDF credentials and Schemas).
 * `ContentAccessorBinary` — wraps raw binary content (used for non-RDF assets). Calling `getContentAsString()` on binary content throws `UnsupportedOperationException`; use `getContentAsStream()` or `getContentAsBytes()` instead.
 
-==== SelfDescriptionMetadata
+==== AssetMetadata
 
 [source,java]
 ----
@@ -1257,15 +1262,15 @@ enum LifeCycleStatus {
 [source,java]
 ----
 /**
- * SelfDescription
+ * Asset — base class for metadata of any content stored in the catalogue.
  */
-public class SelfDescription {
+public class Asset {
 
-  private String sdHash;
+  private String assetHash;
 
   private String id;
 
-  private SelfDescriptionStatus status;
+  private AssetStatus status;
 
   private String issuer;
 
@@ -1283,15 +1288,15 @@ public class SelfDescription {
 }
 
 /**
- * Class for handling the metadata of a Self-Description, and optionally a
+ * Class for handling the metadata of an asset, and optionally a
  * reference to a content accessor.
  */
-public class SelfDescriptionMetadata extends SelfDescription {
+public class AssetMetadata extends Asset {
 
   /**
-   * A reference to the Self-Description content.
+   * A reference to the asset content.
    */
-  private ContentAccessor selfDescription;
+  private ContentAccessor assetContent;
 
 }
 ----
@@ -1311,15 +1316,15 @@ public class Participant {
 
   private String publicKey;
 
-  private String selfDescription;
+  private String asset;
 }
 
 /**
  * POJO Class for holding Participant meta data.
  */
-class ParticipantMetadata extends Participant{
+class ParticipantMetaData extends Participant {
 
-    private String sdHash;
+    private String assetHash;
 }
 ----
 

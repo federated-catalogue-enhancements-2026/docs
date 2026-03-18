@@ -15,7 +15,7 @@ ifndef::imagesdir[:imagesdir: ../../images]
 **Context:** Are the subcomponents implemented as separate micro-services or are they integrated into a single service.
 
 1. **Microservice**: Usage of different technologies possible, independent development, scalability, ...
-2. **Single Service**: Easier maintainability, understanding, easier to handle concurrency (especially conflicting operations like adding SD and changing schema)
+2. **Single Service**: Easier maintainability, understanding, easier to handle concurrency (especially conflicting operations like adding an asset and changing schema)
 
 **Decision:** Implement catalogue as a modular, single service. It's easier to integrate the different components. Most components are called by only one other component. A distributed microservice implementation only introduces additional communication overhead. Scalability issues are not expected, since the main load is read-only and time consuming operations are queries against the graph db, which is a separate component that can be horizontally scaled.
 Therefore, the Federated Catalogue is considered as microservice application within the GXFS ecosystem. The federated catalogue itself also consists of different, individually deployable components.
@@ -53,29 +53,29 @@ This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that 
 
 === ADR 4: Non-RDF Asset Storage Strategy
 
-**Context:** The catalogue needs to support non-RDF assets (PDFs, plain JSON, YAML, images, binary files) alongside RDF Self-Descriptions. Several approaches were considered:
+**Context:** The catalogue needs to support non-RDF assets (PDFs, plain JSON, YAML, images, binary files) alongside RDF credentials. Several approaches were considered:
 
 1. **Separate `/assets` endpoint and storage:** New endpoint, new database table, new service layer. Clean separation but duplicates lifecycle management, filtering, and metadata handling.
-2. **Unified endpoint with dual-path routing:** Extend the existing `POST /self-descriptions` endpoint to accept non-RDF content. Reuse the `sdfiles` table (extended with asset metadata columns), the `SelfDescriptionStore` interface, and the existing filter/lifecycle infrastructure. Route to verification or direct storage based on content-type detection.
+2. **Unified endpoint with dual-path routing:** Extend the existing `POST /assets` endpoint (formerly `POST /self-descriptions`) to accept non-RDF content. Reuse the `assets` table (formerly `sdfiles`, extended with asset metadata columns), the `AssetStore` interface, and the existing filter/lifecycle infrastructure. Route to verification or direct storage based on content-type detection.
 3. **External object storage (S3/MinIO):** Delegate non-RDF storage to an external system. Adds infrastructure complexity and a new dependency.
 
 **Decision:** Option 2 — unified endpoint with dual-path routing.
 
-* The `POST /self-descriptions` endpoint accepts `multipart/form-data` and `application/octet-stream` in addition to `application/json` and `application/ld+json`.
+* The `POST /assets` endpoint accepts `multipart/form-data` and `application/octet-stream` in addition to `application/json` and `application/ld+json`.
 * An `RdfDetector` classifies uploads by content type (configurable allowlist) and content inspection (JSON-LD `@context` pattern).
 * RDF content follows the existing verification + graph storage path.
-* Non-RDF content bypasses verification and graph storage entirely. It is stored in a dedicated `assetFileStore` (separate directory from schema/context caches) with metadata in the `sdfiles` table.
-* Three columns are added to `sdfiles`: `content_type` (VARCHAR), `file_size` (BIGINT), `original_filename` (VARCHAR). The `content` column is made nullable (non-RDF assets store content only in the File Store).
+* Non-RDF content bypasses verification and graph storage entirely. It is stored in a dedicated `assetFileStore` (separate directory from schema/context caches) with metadata in the `assets` table.
+* Three columns are added to `assets`: `content_type` (VARCHAR), `file_size` (BIGINT), `original_filename` (VARCHAR). The `content` column is made nullable (non-RDF assets store content only in the File Store).
 * Non-RDF assets receive auto-generated identifiers: `urn:asset:sha256:<content-hash>`.
 
 **Rationale:** Reusing the existing endpoint and metadata infrastructure avoids duplication of lifecycle management, filtering, pagination, and access control. The `RdfDetector` allowlist gives operators explicit control over which content types trigger verification. Separate File Store instances keep asset blobs isolated from schema caches for operational clarity.
 
 === ADR 5: Fine-Grained Permission-Based Authorization
 
-**Context:** The original authorization model used four coarse-grained roles (Ro-MU-CA, Ro-MU-A, Ro-SD-A, Ro-PA-A) to control API access. This presented several limitations:
+**Context:** The original authorization model used four coarse-grained roles (Ro-MU-CA, Ro-MU-A, Ro-AS-Afootnote:[Originally named `Ro-SD-A` (Self-Description Administrator). Renamed to `Ro-AS-A` (Asset Administrator) to align with the generic asset terminology.], Ro-PA-A) to control API access. This presented several limitations:
 
-1. **No read-level control.** Self-description and schema read endpoints were open to any authenticated user, with no way to restrict read access.
-2. **No separation of concerns.** The Ro-SD-A and Ro-MU-A roles granted full write access to self-descriptions, with no way to differentiate between create, update (revoke), and delete operations.
+1. **No read-level control.** Asset and schema read endpoints were open to any authenticated user, with no way to restrict read access.
+2. **No separation of concerns.** The Ro-AS-A and Ro-MU-A roles granted full write access to assets, with no way to differentiate between create, update (revoke), and delete operations.
 3. **No schema write control.** Schema management was restricted only to Ro-MU-CA, with no intermediate access level for schema administrators.
 4. **No query access control.** The query endpoint was accessible to any authenticated user.
 
@@ -88,7 +88,58 @@ Two approaches were considered:
 
 Ten atomic permissions are defined: `ASSET_CREATE`, `ASSET_READ`, `ASSET_UPDATE`, `ASSET_DELETE`, `SCHEMA_CREATE`, `SCHEMA_READ`, `SCHEMA_UPDATE`, `SCHEMA_DELETE`, `QUERY_EXECUTE`, and `ADMIN_ALL`. Each API endpoint requires a specific permission (or `ADMIN_ALL`). Permissions are implemented as Keycloak client roles and flow into Spring Security authorities via the existing `CustomJwtAuthenticationConverter`.
 
-Backward compatibility is maintained by converting the legacy roles (Ro-MU-CA, Ro-MU-A, Ro-SD-A) into Keycloak composite roles that include the appropriate permissions. Users with legacy roles automatically receive the corresponding fine-grained permissions without any migration.
+Backward compatibility is maintained by converting the legacy roles (Ro-MU-CA, Ro-MU-A, Ro-AS-A) into Keycloak composite roles that include the appropriate permissions. Users with legacy roles automatically receive the corresponding fine-grained permissions without any migration.
 
 **Rationale:** Fine-grained permissions enable precise access control for multi-tenant deployments where different user groups need different levels of access to catalogue resources. The composite role mechanism ensures zero-disruption migration for existing deployments. No changes to JWT extraction or authentication infrastructure were required.
+
+=== ADR 6: Claim Class Naming Convention
+
+**Context:** CAT-NFR-01footnote:[Enhancement of the XFSC Federated Catalogue. 2025. https://github.com/eclipse-xfsc/docs/blob/9a178c30f76610e5924fd72c39d259d6a8ae0461/federated-catalogue/src/docs/CAT%20Enhancement/CAT_Enhancement_Specifications%20v1.0.pdf] renamed the legacy `SdClaim` class (tied to Self-Description terminology). The team needed to decide on the new name. Three options were considered:
+
+1. **`Claim`** — generic, forward-looking, but too broad for the current implementation which only extracts claims from credentials.
+2. **`AssetClaim`** — aligns with the generic asset terminology but is misleading because non-RDF assets cannot have claims.
+3. **`CredentialClaim`** — accurate for the current scope (only credentials produce claims), with a planned rename when scope expands.
+
+The discussion established the following asset taxonomy:
+
+[mermaid]
+....
+classDiagram
+    class Asset
+    class NonRDFAsset
+    class RDFAsset
+    class Credential
+    class NonCredential
+    class Claim {
+        &lt;&lt;concept&gt;&gt;
+    }
+
+    Asset <|-- RDFAsset
+    Asset <|-- NonRDFAsset
+    RDFAsset <|-- Credential
+    RDFAsset <|-- NonCredential
+    Credential ..> Claim : contains
+    NonCredential ..> Claim : contains
+
+    note for Claim "A Claim is the atomic unit\nof semantic assertion (Triple)."
+....
+
+Key concepts:
+
+* Non-RDF assets cannot have claims — they are opaque binary content.
+* RDF assets can be credentials (verified VPs/VCs) or non-credentials (plain Turtle, RDF/XML).
+* All RDF assets contain triples, and claims are synonymous with triples in this context.
+* Even non-credential RDF assets contain claims; they are simply unverified.
+
+**Decision:** Option 3 — `CredentialClaim`, with a phased naming strategy:
+
+[cols="1,2,2",options="header"]
+|===
+| Phase | Class Name | Rationale
+| Legacy | `SdClaim` | Original name tied to Self-Description terminology.
+| Current (CAT-NFR-01) | `CredentialClaim` | Only credentials produce claims in the current codebase.
+| Future (CAT-FR-GD-02) | `RdfClaim` | When non-credential RDF claim extraction is implemented (story 008), claims can originate from any RDF asset.
+|===
+
+**Rationale:** Naming for the current scope avoids premature abstraction. The rename to `RdfClaim` is deferred to the story (CAT-FR-GD-02) that actually introduces non-credential claim extraction, following a "name for what it is now, rename when scope expands" principle. This keeps each rename tied to a concrete implementation change rather than a speculative future.
 

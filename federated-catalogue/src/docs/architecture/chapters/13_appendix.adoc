@@ -20,11 +20,11 @@ NOTE: The examples below use **openCypher** syntax, which applies to the **Neo4j
 All of the following examples have the same structure:
 
 Data::
-        Self-Descriptions that are assumed to exist in the Graph Database, i.e., after having it uploaded during the xref:06_runtime_view#_onboarding_new_participant[Onboarding of a new Participant], or when xref:06_runtime_view#_adding_a_self_description_for_an_offering[creating a new Service Offering].  A link to the full input files is provided; the listing shows an excerpt with the information relevant for the query.  For readability, it focuses on the claims about the credential subject, omitting the full context definition and even certain mandatory attributes if they are not relevant for the query.
+        Credentials that are assumed to exist in the Graph Database, i.e., after having been uploaded during the xref:06_runtime_view#_onboarding_new_participant[Onboarding of a new Participant], or when xref:06_runtime_view#_adding_a_credential_for_an_offering[creating a new Service Offering].  A link to the full input files is provided; the listing shows an excerpt with the information relevant for the query.  For readability, it focuses on the claims about the credential subject, omitting the full context definition and even certain mandatory attributes if they are not relevant for the query.
 Query::
-        The query to be asked via the xref:06_runtime_view#_adding_a_self_description_for_an_offering[query endpoint].
+        The query to be asked via the xref:06_runtime_view#_adding_a_credential_for_an_offering[query endpoint].
 Result::
-        The expected result.  Some queries will only be reproducible exactly in this way if the catalogue contains no other Self-Descriptions.
+        The expected result.  Some queries will only be reproducible exactly in this way if the catalogue contains no other credentials.
 
 ==== All Nodes and Relationships
 
@@ -34,7 +34,7 @@ Get all nodes and relationships between them.
 
 Three Participants (legal persons): https://gitlab.com/gaia-x/data-infrastructure-federation-services/cat/fc-service/-/tree/main/examples/queries/test-issuer.jsonld[1], https://gitlab.com/gaia-x/data-infrastructure-federation-services/cat/fc-service/-/tree/main/examples/queries/test-issuer2.jsonld[2], https://gitlab.com/gaia-x/data-infrastructure-federation-services/cat/fc-service/-/tree/main/examples/queries/test-issuer3.jsonld[3].
 
-This listing shows the full structure of a Self-Description in JSON-LD.  The following listings will focus on the credential subject, as it is only the claims about that subject which are extracted into the Graph Database.
+This listing shows the full structure of a credential (Verifiable Presentation or standalone Verifiable Credential) in JSON-LD.  The following listings will focus on the credential subject, as it is only the claims about that subject which are extracted into the Graph Database.
 
 [source,json]
 ----
@@ -120,7 +120,7 @@ MATCH (m) -[relation]-> (n) RETURN m, relation, n
   relation=legalAddress}]
 ----
 
-Note that, via the special property +claimsGraphUri+ all nodes have a link back to the ID of the credential subject from which they have been extracted.  This way, it is possible to obtain further information about the respective Self-Description from the Metadata Store.
+Note that, via the special property +claimsGraphUri+ all nodes have a link back to the ID of the credential subject from which they have been extracted.  This way, it is possible to obtain further information about the respective asset from the Metadata Store.
 
 ==== Simple Relationship
 
@@ -160,7 +160,7 @@ MATCH (o)<-[:some_other_property]-(n:ServiceOffering)-[:some_property]->(m) WHER
 
 ==== Essential Attributes
 
-Return the type, name, legal address and legal name of a (+Participant+) Self-Description.
+Return the type, name, legal address and legal name of a (+Participant+) credential.
 
 ===== Data
 
@@ -298,7 +298,7 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100
 
 ===== All claims with credential subject
 
-Retrieve all Self-Description claims together with the credential subject they belong to, using RDF-star syntax:
+Retrieve all credential claims together with the credential subject they belong to, using RDF-star syntax:
 
 [source,sparql]
 ----
@@ -312,7 +312,7 @@ LIMIT 100
 
 ===== Claims for a specific credential subject
 
-Retrieve claims belonging to a specific Self-Description:
+Retrieve claims belonging to a specific credential:
 
 [source,sparql]
 ----
