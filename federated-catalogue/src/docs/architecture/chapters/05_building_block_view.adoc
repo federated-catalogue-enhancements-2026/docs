@@ -527,15 +527,14 @@ classDiagram
     }
 
     class IriGenerator {
-        +generateIri(content: byte[], contentType: String) String
-        +extractIriFromRdf(content: String) String
+        +resolveIri(content: ContentAccessor, isRdf: boolean) String
+        ~extractIdFromRdf(content: ContentAccessor) String
         +generateUuidUrn() String
-        +generateDid() String
+        +generateDid(method: String, identifier: String) String
     }
 
     class IriValidator {
         +isValid(iri: String) boolean
-        +validate(iri: String) void
     }
 
     class AssetFilter {
@@ -571,7 +570,7 @@ The `AssetStore` provides two parallel access paths: **hash-based** methods (int
 
 The `deleteAsset(hash)` and `changeLifeCycleStatus(hash, status)` methods are the deliberate exceptions — both remain hash-based to guarantee unambiguous single-row targeting. See ADR 7, Hash-Based Mutation Operations Exception.
 
-The `IriGenerator` assigns IRIs before storage: it extracts IRIs from RDF content (`credentialSubject.id`, `@id`, ontology/shapes/vocabulary IRIs) or generates UUID URNs (RFC 4122) for non-RDF assets and as fallback. The `IriValidator` validates all assigned IRIs against supported formats (DIDs, UUID URNs, generic URNs, HTTP/HTTPS IRIs) and rejects invalid values before storage.
+The `IriGenerator` assigns IRIs before storage: it extracts IRIs from RDF content (`credentialSubject.id`, `@id`, ontology/shapes/vocabulary IRIs) or generates UUID URNs (RFC 4122) for non-RDF assets and as fallback. The `IriValidator` checks all assigned IRIs against supported formats (DIDs, UUID URNs, generic URNs, HTTP/HTTPS IRIs) — returning `true`/`false`. Callers decide how to handle invalid IRIs (fallback to UUID URN, or reject the request).
 
 The asset metadata is stored in the metadata store, using the following data model:
 

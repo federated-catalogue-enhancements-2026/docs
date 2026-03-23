@@ -156,7 +156,7 @@ Key concepts:
 Two new components are introduced:
 
 * **`IriGenerator`** — extracts IRIs from RDF content (Verifiable Credentials via `credentialSubject.id`, generic JSON-LD via `@id`, OWL ontologies, SHACL shapes, SKOS concept schemes) or generates UUID URNs per RFC 4122 for non-RDF assets and as fallback.
-* **`IriValidator`** — validates IRI formats before storage. Supported formats: DIDs (`did:<method>:<id>`), UUID URNs (`urn:uuid:<uuid>`), generic URNs (`urn:<nid>:<nss>`), and HTTP/HTTPS IRIs.
+* **`IriValidator`** — checks IRI formats via `isValid(iri): boolean`. Supported formats: DIDs (`did:<method>:<id>`), UUID URNs (`urn:uuid:<uuid>`), generic URNs (`urn:<nid>:<nss>`), and HTTP/HTTPS IRIs. Returns true/false — callers decide how to handle invalid IRIs.
 
 The public API is extended with IRI-based methods (`getById`, `getFileById`) alongside the existing hash-based methods. Read endpoints use `/assets/{id}` where `{id}` is the URL-encoded IRI. Mutation operations (delete, revoke) remain hash-based — see the Hash-Based Mutation Operations Exception below.
 
