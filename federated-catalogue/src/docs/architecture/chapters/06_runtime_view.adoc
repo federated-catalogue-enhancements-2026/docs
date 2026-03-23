@@ -766,7 +766,7 @@ sequenceDiagram
     API -->> - User:Schema IDs
 ....
 
-==== Adding a Schema
+==== Adding a Schema (RDF)
 
 [mermaid, width=2000]
 ....
@@ -795,6 +795,40 @@ sequenceDiagram
     Note right of API: Server layer maps core result<br/>to generated API model
     API -->> - User:SchemaResult {id, warnings}
 ....
+
+==== Adding a Non-RDF Schema (JSON Schema / XML Schema)
+
+When the `Content-Type` is `application/schema+json` (JSON Schema) or `application/xml` (XML Schema), the `SchemasService` bypasses the `SchemaStore` entirely and stores the schema directly in the File Store.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant Auth as Auth*
+    participant API as SchemasService
+    participant FileStore as File Store
+    participant MetadataStore as Metadata Store
+    User ->> + Auth:Authorize(SCHEMA_CREATE | ADMIN_ALL)
+    Auth -->> - User:OK
+    User ->> + API:POST /schemas (Content-Type: application/schema+json or application/xml)
+    API ->> API:[Detect non-RDF content type]
+    API ->> API:[Compute content hash → urn:schema:sha256:&lt;hash&gt;]
+    API ->> + MetadataStore:Check for duplicate ID
+    MetadataStore -->> - API:Not found
+    API ->> + FileStore:Store raw file
+    FileStore -->> - API:OK
+    API ->> + MetadataStore:Persist metadata (id, contentType, uploadTime)
+    MetadataStore -->> - API:OK
+    API -->> - User:SchemaResult {id, warnings}
+....
+
+**Key differences from RDF schema upload:**
+
+* No RDF parsing, type detection, or term extraction occurs.
+* No graph database interaction — the schema is not added to the composite schema graph.
+* The identifier is content-addressable (`urn:schema:sha256:<hash>`); uploading identical content returns HTTP 409 Conflict.
+* The schema appears in `GET /schemas` under the `jsonSchemas` or `xmlSchemas` list.
 
 
 ==== Updating a Schema
