@@ -271,7 +271,7 @@ Format-aware resolution in `CredentialVerificationStrategy.resolveBaseClass()`:
 
 ==== Stripped Ontology: Why the Registry OWL Cannot Be Used Directly
 
-The official Gaia-X 2511 OWL file from the registryfootnote:[https://registry.lab.gaia-x.eu/development/owl/2511[Gaia-X Registry — OWL 2511]] cannot be bundled as-is. It contains approximately 7,000 enum individuals whose IRIs embed a second `#` in the fragment component (e.g., `\https://w3id.org/gaia-x/2511#CountryNameAlpha2#SM`). These are not valid IRIs per RFC 3987. Apache Jena emits one WARN log line per invalid IRI, which causes two problems:
+The official Gaia-X 2511 OWL file from the registryfootnote:[https://registry.lab.gaia-x.eu/development/owl/2511[Gaia-X Registry — OWL 2511]] is ~2.9 MB (~58,000 lines) and cannot be bundled as-is. It contains approximately 7,000 enum individuals whose IRIs embed a second `#` in the fragment component (e.g., `\https://w3id.org/gaia-x/2511#CountryNameAlpha2#SM`). These are not valid IRIs per RFC 3987footnote:[https://www.rfc-editor.org/rfc/rfc3987[RFC 3987 — Internationalized Resource Identifiers (IRIs)]]. Apache Jena emits one WARN log line per invalid IRI, which causes two problems:
 
 1. **Test suite noise:** Thousands of warnings bury real errors in log output, making test failures difficult to diagnose.
 2. **Apparent hangs:** The volume of log output slows test execution to the point where the suite appears to hang.
@@ -280,21 +280,38 @@ The catalogue's `SchemaStoreImpl` only needs the **class hierarchy** (`owl:Class
 
 The bundled `gx-2511.ttl` is a **stripped extraction** containing only:
 
-* The `owl:Ontology` declaration (required for `SchemaStoreImpl` to recognize the file as an ontology schema)
+* The `owl:Ontology` declaration — required because `SchemaStoreImpl.analyzeAndValidate()` classifies files by checking for `owl:Ontology`, `sh:NodeShape`, or `skos:ConceptScheme`; without it the file would not be recognized as an ontology
 * All `owl:Class` declarations
-* All direct `rdfs:subClassOf` relationships (blank-node OWL restrictions stripped)
+* All direct `rdfs:subClassOf` relationships — the extraction script handles the 2511 source pattern where blank-node OWL restrictions are interleaved with direct superclass references (e.g., `rdfs:subClassOf [ a owl:Restriction ; ... ], gx:ComputeServiceOffering`)
 
-The extraction is performed by `fc-tools/extract-ontology-hierarchy.py`, which parses the full registry TTL and writes a minimal hierarchy file. When the Gaia-X registry publishes updated 2511 ontology versions, the extraction must be re-run:
+The following constructs are intentionally omitted:
+
+[cols="2,3",options="header"]
+|===
+| Omitted construct | Effect
+| Enum individuals (~7,000) | Carry the invalid double-`#` IRIs. Not used by type resolution.
+| `owl:Restriction` blank nodes | Property cardinality/value constraints on instances. Not queried by `getSubjectType()`.
+| `owl:equivalentClass` | Would cause the OWL reasoner to infer mutual `rdfs:subClassOf`. Currently absent from the 2511 core hierarchy.
+| `owl:intersectionOf` / `owl:unionOf` | Inferred subclass from set-theoretic definitions. Not present in 2511.
+| Data/annotation properties | Not queried by type resolution.
+|===
+
+The extraction is performed by `fc-tools/extract-ontology-hierarchy.py`, which parses the full registry TTL and writes a minimal hierarchy file. When the Gaia-X registry publishes updated 2511 ontology versions, the extraction must be re-run and tests verified:
 
 [source,bash]
 ----
+# 1. Download the new full OWL file
 curl -o /tmp/gx-full.ttl https://registry.lab.gaia-x.eu/development/owl/2511
 
+# 2. Run the extraction script (from the federated-catalogue repo root)
 python3 fc-tools/extract-ontology-hierarchy.py \
     --input  /tmp/gx-full.ttl \
     --output fc-service-core/src/main/resources/defaultschema/ontology/gx-2511.ttl \
     --ontology-iri https://w3id.org/gaia-x/2511 \
     --source-url https://registry.lab.gaia-x.eu/development/owl/2511
+
+# 3. Run tests to verify the hierarchy is intact
+mvn test -pl fc-service-core -Dtest=LoireTypeResolutionTest,SchemaValidationServiceTest,SchemaStoreTest
 ----
 
 [NOTE]
