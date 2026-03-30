@@ -731,7 +731,7 @@ public interface SchemaStore {
 }
 ----
 
-Schema versioning is implemented via Hibernate Envers (see <<_audit_history>>). Every `PUT /schemas/{id}` call triggers a JPA `save()`, causing Envers to append a snapshot to `schemafiles_aud`. The `SchemaAuditHelper` component (DAO layer) encapsulates all Envers API calls (`AuditReaderFactory`, `AuditEntity` queries), keeping Envers types out of `SchemaJpaDao`. Versions exposed through the API are 1-based positional ordinals computed over per-schema revisions in ascending order.
+Schema versioning is implemented via Hibernate Envers (see <<_audit_history>>). Every `PUT /schemas/{id}` call triggers a JPA `save()`, causing Envers to append a snapshot to `schemafiles_aud`. The `SchemaAuditRepository` component (DAO layer) encapsulates all Envers API calls (`AuditReaderFactory`, `AuditEntity` queries), keeping Envers types out of `SchemaJpaDao`. Versions exposed through the API are 1-based positional ordinals computed over per-schema revisions in ascending order.
 
 The schema metadata is stored in the metadata store, using the following data model:
 
