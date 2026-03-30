@@ -859,6 +859,70 @@ erDiagram
         SMALLINT revtype
         VARCHAR schemaid
         VARCHAR namehash
+        TIMESTAMP uploadtime
+        TIMESTAMP updatetime
+        VARCHAR type
+        TEXT content
+    }
+
+    SCHEMATERMS_AUD {
+        BIGINT id PK
+        INTEGER rev PK_FK
+        SMALLINT revtype
+        VARCHAR term
+        BIGINT schema_file_id
+    }
+
+    REVINFO ||--o{ ASSETS_AUD : tracks
+    REVINFO ||--o{ SCHEMAFILES_AUD : tracks
+    REVINFO ||--o{ SCHEMATERMS_AUD : tracks
+....
+
+.Audit table notes
+****
+. Each `_aud` table mirrors the columns of its source table plus `rev` (FK to REVINFO) and `revtype` (0=INSERT, 1=UPDATE, 2=DELETE). The composite primary key is `(id, rev)`.
+. Audit tables are managed by Liquibase (changeset `2026-03-25-envers-*`), not by Hibernate's `hbm2ddl` auto-generation.
+. Known limitation: bulk JPQL `DELETE` or `UPDATE` statements bypass Envers because they do not trigger JPA entity lifecycle events. All current DAO code uses entity-level operations, so this limitation does not apply in practice.
+****
+
+[[_audit_history]]
+==== Audit History (Hibernate Envers)
+
+The catalogue uses Hibernate Enversfootnote:[https://hibernate.org/orm/envers/[Hibernate Envers — Entity Auditing]] to maintain an audit trail for assets and schemas. Every insert, update, and delete on an audited entity is recorded in a corresponding `_aud` shadow table, linked to a global revision in the `REVINFO` table.
+
+Audited entities: `Asset` (`assets`), `SchemaFile` (`schemafiles`), `SchemaTerm` (`schematerms`).
+
+[mermaid, width=2000]
+....
+erDiagram
+    REVINFO {
+        INTEGER rev PK "sequence: revinfo_seq"
+        BIGINT revtstmp "epoch millis"
+    }
+
+    ASSETS_AUD {
+        BIGINT id PK
+        INTEGER rev PK_FK
+        SMALLINT revtype "0=INSERT 1=UPDATE 2=DELETE"
+        VARCHAR asset_hash
+        TEXT subjectid
+        TEXT issuer
+        TIMESTAMP uploadtime
+        TIMESTAMP statustime
+        TIMESTAMP expirationtime
+        SMALLINT status
+        TEXT content
+        VARCHAR content_type
+        BIGINT file_size
+        VARCHAR original_filename
+    }
+
+    SCHEMAFILES_AUD {
+        BIGINT id PK
+        INTEGER rev PK_FK
+        SMALLINT revtype
+        VARCHAR schemaid
+        VARCHAR namehash
         TIMESTAMP created_at
         TIMESTAMP modified_at
         VARCHAR type
