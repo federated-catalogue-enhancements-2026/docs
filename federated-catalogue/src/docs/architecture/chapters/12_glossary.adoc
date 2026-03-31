@@ -72,7 +72,4 @@ The identifier must be a valid IRI (see ADR 7).
 |EnvelopedVerifiableCredential
 |A W3C VC 2.0 / ICAM 24.07 mechanism for embedding inner Verifiable Credentials inside a VP JWT. Each inner VC is wrapped as a JSON object with `type: "EnvelopedVerifiableCredential"` and an `id` field containing a `data:` URL (`data:application/vc+jwt,eyJ...`) from which the compact JWT is extracted.
 
-|FormatDetector
-|Component that classifies incoming credentials into one of three verification paths: Path 1 (Tagus — JSON-LD with data-integrity proof), Path 2 (Loire — JWT per ICAM 24.07 / W3C VC-JOSE-COSE), or Path 3 (non-Gaia-X VC 2.0). Classification is based on JWT `typ`/`cty` headers and payload structure.
-
 |===
