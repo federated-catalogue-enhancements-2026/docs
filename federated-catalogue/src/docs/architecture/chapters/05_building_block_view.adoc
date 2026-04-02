@@ -187,7 +187,7 @@ Asset, schema, and query endpoint access is controlled by fine-grained permissio
 | Permission | Grants access to
 | ASSET_CREATE | Create assets (credentials and non-RDF uploads)
 | ASSET_READ | Read and list assets
-| ASSET_UPDATE | Revoke assets
+| ASSET_UPDATE | Update assets (versioned) and revoke assets
 | ASSET_DELETE | Delete assets
 | SCHEMA_CREATE | Create schemas
 | SCHEMA_READ | Read and list schemas
@@ -524,6 +524,10 @@ classDiagram
         +invalidateExpiredAssets() int
         +getActiveAssetHashes(afterHash: String, count: int, chunks: int, chunkId: int) List~String~
         +clear() void
+        +getVersionHistory(id: String) List~AssetMetadata~
+        +getVersionHistoryPage(id: String, page: int, size: int) PaginatedResults~AssetMetadata~
+        +getByIdAndVersion(id: String, version: int) AssetMetadata
+        +getVersionCount(id: String) int
     }
 
     class IriGenerator {
@@ -593,6 +597,7 @@ The asset metadata is stored in the metadata store, using the following data mod
 | VARCHAR | content_type | | MIME type (e.g. application/pdf)
 | BIGINT | file_size | | asset size in bytes
 | VARCHAR(500) | original_filename | | client-provided filename
+| TEXT | change_comment | | optional change note for this version
 |===
 
 .Asset table notes
@@ -851,6 +856,7 @@ erDiagram
         VARCHAR content_type
         BIGINT file_size
         VARCHAR original_filename
+        TEXT change_comment
     }
 
     SCHEMAFILES_AUD {
