@@ -556,7 +556,7 @@ sequenceDiagram
 
 ==== Requesting a specific Asset
 
-Assets can be retrieved by their IRI. The IRI is URL-encoded in the path parameter.
+Assets can be retrieved by their IRI. The IRI is URL-encoded in the path parameter. The optional `?version=X` query parameter retrieves a specific historical version (1-based ordinal). Without it, the current version is returned. A non-existent version number returns HTTP 404.
 
 [mermaid, width=2000]
 ....
@@ -568,10 +568,15 @@ sequenceDiagram
     participant AssetStore as AssetStore
     User ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
     Auth -->> - User:OK
-    User ->> + API:GET /assets/{id}
-    API ->> + AssetStore: getById(String id)
-    AssetStore -->> - API: AssetMetadata<br>+Asset
-    API -->> - User:AssetMetadata, Asset
+    User ->> + API:GET /assets/{id}[?version=X]
+    alt version parameter present
+        API ->> + AssetStore: getByIdAndVersion(id, version)
+        AssetStore -->> - API: AssetMetadata (or 404)
+    else no version parameter
+        API ->> + AssetStore: getById(id)
+        AssetStore -->> - API: AssetMetadata
+    end
+    API -->> - User:AssetMetadata
 ....
 
 
@@ -661,11 +666,32 @@ sequenceDiagram
 
 **Step 11:** The raw bytes are written to the `assetFileStore`, not the schema/context File Store.
 
-==== Updating a Credential for an Offering
+==== Updating an Asset
 
-There is no direct way to update a credential. Updates can happen by submitting a new credential, referring to the same credentialSubject. The old credential for the same credentialSubject will be deprecated.
+Assets are updated via `PUT /assets/{id}`. The update is applied in-place on the single row for that IRI; Hibernate Envers captures the previous state as a new revision in `assets_aud` automatically. No DEPRECATED row is created. The optional `changeComment` query parameter is recorded on the new revision.
 
-See runtime scenario <<_adding_a_credential_for_an_offering>> for more details.
+The IRI extracted from the credential body must match the path `{id}`. If they diverge, HTTP 400 is returned.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant Auth as Authentication
+    participant API
+    participant VerificationService
+    participant AssetStore as AssetStore
+    User ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - User:OK
+    User ->> + API:PUT /assets/{id}[?changeComment=...]
+    API ->> API:Check[path id == credential body IRI — else 400]
+    API ->> + VerificationService:verifyOfferingCredential(credential)
+    VerificationService -->> - API:CredentialVerificationResult
+    API ->> + AssetStore:storeCredential(AssetMetadata, CredentialVerificationResult)
+    Note right of AssetStore: In-place UPDATE — Envers records<br/>previous state in assets_aud
+    AssetStore -->> - API:OK
+    API -->> - User:200 Asset
+....
 
 
 ==== Revoking a Credential for an Offering
@@ -692,6 +718,60 @@ sequenceDiagram
         AssetStore -->> GraphDB: deleteClaims(credentialSubject)
         AssetStore -->> - API: [Ok, if no exception]
         API -->> - User:[Asset Meta]
+    end
+....
+
+
+==== Get Asset Version History
+
+Returns the full version history for an asset, ordered newest-first. Supports pagination via `?page` and `?size` (defaults: 0 and 20). Returns HTTP 404 if the asset IRI is unknown.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant Auth as Authentication
+    participant API
+    participant AssetStore as AssetStore
+    User ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
+    Auth -->> - User:OK
+    User ->> + API:GET /assets/{id}/versions[?page=0&size=20]
+    API ->> + AssetStore: getVersionHistoryPage(id, page, size)
+    AssetStore -->> - API: PaginatedResults~AssetVersion~ (or 404)
+    API ->> API:map to AssetVersionList {id, total, versions[]}
+    Note right of API: Each entry: version (1-based), createdAt,<br/>createdBy, status, isCurrent, changeComment
+    API -->> - User:AssetVersionList
+....
+
+
+==== Revoking a Specific Asset Version
+
+Revokes the current version of an asset by version ordinal. Only the current (latest) version can be revoked — attempting to revoke a historical version returns HTTP 409. After revocation the asset is unavailable via `GET /assets/{id}` (404) until a new version is uploaded.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant AssetStore as AssetStore
+    User ->> + API:POST /assets/{id}/versions/{version}/revoke
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> + AssetStore: getVersionCount(id)
+    AssetStore -->> - API: totalVersions
+    alt version < totalVersions
+        API -->> User: 409 Conflict (historical version — immutable)
+    else version == totalVersions (current)
+        API ->> + AssetStore: getById(id)
+        AssetStore -->> - API: AssetMetadata
+        API --> API:Check[credential-participant == user-participant | ADMIN_ALL]
+        API ->> + AssetStore: changeLifeCycleStatus(hash, REVOKED)
+        AssetStore -->> GraphDB: deleteClaims(credentialSubject)
+        AssetStore -->> - API: OK
+        API -->> - User: 200 AssetVersion
     end
 ....
 
@@ -1029,8 +1109,8 @@ The previous section described the sce
 This section describes some sub scenarios, that occure
 
 ==== Store Credentials to the Asset Store
-This sequence diagram shows the detailed flow, when storing credentials in the Asset Store.
-Since credentials are immutable, they can't be updated. To update the description of an Offering or Participant, a new credential with the same __credentialsSubject__ must be passed to the storeCredential component. This __credentialsSubject__ is internally used to check if an update workflow is needed. Concurrent modifications are avoided by using a transaction on the relational database used for storing the metadata of the asset, and locking the row of the currently active credential for the given __credentialsSubject__. A partial index on the metadata database ensures that for a given __credentialsSubject__ only one credential can have the state __Active__.
+This sequence diagram shows the detailed flow when storing credentials in the Asset Store.
+Each IRI maps to a single row in the metadata store. On first upload, a new row is inserted (version 1). On subsequent uploads for the same IRI, the existing row is updated in-place; Hibernate Envers captures the previous state automatically in `assets_aud`. Concurrent modifications are serialized by the database row-level lock on the UPDATE.
 
 [mermaid, width=2000]
 ....
@@ -1041,15 +1121,17 @@ sequenceDiagram
     participant MetaData as MetaData Store
     participant FileStore as File Store
         Service ->> + AssetStore: storeCredential<br>(AssetMetadata, CredentialVerificationResult)
-        AssetStore ->> + MetaData:getActiveForSubject<br>(credentialSubject)
-        MetaData -->> AssetStore:MetaData or NULL
-        opt credentialSubject is present
-            AssetStore ->> MetaData:deprecateExisting()
+        AssetStore ->> + MetaData:findBySubjectId<br>(credentialSubject)
+        MetaData -->> AssetStore:existing row or NULL
+        alt existing row found (update)
+            AssetStore ->> MetaData:updateInPlace(fields, changeComment)
+            Note right of MetaData: Envers records previous<br/>state in assets_aud
             MetaData -->> AssetStore:OK
             AssetStore ->> GraphDB:deleteClaims(credentialSubject)
+        else no existing row (first upload)
+            AssetStore ->> MetaData:insertMetaData()
+            MetaData -->> AssetStore:OK
         end
-        AssetStore ->> MetaData:storeMetaData()
-        MetaData -->> - AssetStore:OK
         AssetStore ->> + FileStore:storeFile()
         FileStore -->> - AssetStore:OK
         AssetStore ->> GraphDB:addClaims(Claims, credentialSubject)
