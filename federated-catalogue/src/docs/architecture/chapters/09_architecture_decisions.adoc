@@ -181,3 +181,155 @@ The same rationale applies to both operations:
 
 4. **Audit versioning forward-look** When audit history tracking is introduced (e.g., Hibernate Envers), physical deletion conflicts with audit trail immutability. At that point, the delete operation should transition to a lifecycle status change (e.g., → EOL) rather than physical row removal. Retaining hash-based targeting keeps the migration path clean: `DELETE WHERE hash` transitions to `UPDATE status WHERE hash`. The targeting mechanism (hash) stays consistent across this evolution.
 
+=== ADR 8: W3C VC-JOSE-COSE as Canonical JWT Header Standard
+
+**Context:** The Federated Catalogue needs to accept JWT-wrapped credentials from Gaia-X Loire deployments. Two competing header value sets exist for JWT `typ` and `cty` fields:
+
+1. **W3C VC-JOSE-COSEfootnote:[https://www.w3.org/TR/vc-jose-cose/[Securing Verifiable Credentials using JOSE and COSE. W3C Recommendation.]]:** `vc+jwt`, `vp+jwt` (typ) and `vc`, `vp` (cty). All values are IANA-registered.
+2. **Gaia-X ICAM 24.07footnote:[https://docs.gaia-x.eu/technical-committee/identity-credential-access-management/24.07/credential_format/[Gaia-X ICAM 24.07 — Credential Format]]:** `vc+ld+json+jwt`, `vp+ld+jwt` (typ) and `vc+ld+json`, `vp+ld+json` (cty). None are IANA-registered.
+
+The live GXDCH Compliance Service (`compliance.lab.gaia-x.eu/v2`) issues JWTs with W3C VC-JOSE-COSE headers, not the ICAM 24.07 headers. Accepting only ICAM headers means real Gaia-X credentials from GXDCH are rejected.
+
+Three approaches were considered:
+
+1. **Accept only ICAM 24.07 values:** Matches the Gaia-X spec letter but rejects live GXDCH credentials.
+2. **Accept only W3C VC-JOSE-COSE values:** Correct per IANA registration but breaks any issuer that follows ICAM 24.07 literally.
+3. **Accept both, canonicalize W3C:** Accept both header sets in code. Advertise only W3C values in public documentation (OpenAPI spec, error messages, architecture docs). Tolerate ICAM values silently.
+
+**Decision:** Option 3 — W3C VC-JOSE-COSE as canonical, ICAM 24.07 tolerated.
+
+[cols="2,2,2",options="header"]
+|===
+| Header | W3C VC-JOSE-COSE (canonical) | ICAM 24.07 (tolerated)
+| VC `typ` | `vc+jwt` | `vc+ld+json+jwt`
+| VC `cty` | `vc` | `vc+ld+json`
+| VP `typ` | `vp+jwt` | `vp+ld+jwt`
+| VP `cty` | `vp` | `vp+ld+json`
+|===
+
+HTTP content types follow the same principle:
+
+[cols="1,2",options="header"]
+|===
+| Standard | Content-Type
+| W3C (canonical) | `application/vc+jwt`, `application/vp+jwt`
+| ICAM 24.07 (tolerated) | `application/vc+ld+json+jwt`, `application/vp+ld+json+jwt`
+|===
+
+**Rationale:**
+
+* The W3C values are IANA-registered and used by the live GXDCH Compliance Service — the primary credential issuer in the Gaia-X ecosystem.
+* The ICAM 24.07 values are not IANA-registered (`+ld` is not a valid structured syntax suffix per RFC 6838) and no known credential issuer in production uses them.
+* Accepting both in code costs nothing (a `Set.of(...)` with additional values) while maximizing interoperability.
+* Public-facing documentation advertises only the standards-compliant values, steering the ecosystem toward IANA-registered types.
+* No cross-family validation is enforced: `typ` and `cty` are validated independently against their respective sets, not as pairs. A JWT with `typ: vc+jwt` and `cty: vc+ld+json` is accepted — this is intentionally permissive.
+* `cty` remains mandatory despite the W3C spec stating SHOULD (not MUST). The live GXDCH always sends it, and relaxing the requirement would widen the surface for malformed JWTs.
+
+=== ADR 9: Loire Ontology & Schema Namespace Coexistence
+
+**Context:** The Federated Catalogue bundles Gaia-X ontology files (OWL) and SHACL shapes for semantic type resolution and schema validation. The existing bundle uses the Tagus-era namespaces (`gax-core:`, `gax-trust-framework:`). Loire credentials use the `https://w3id.org/gaia-x/2511#` namespace with a different class hierarchy (e.g., `gx:LegalPerson` instead of `gax-trust-framework:LegalParticipant`).
+
+The class hierarchies are **disconnected graphs** — `gax-core:Participant` is not a subclass of `gx:2511#Participant`. A single set of type URIs cannot resolve both. Without the 2511 ontology, SPARQL-based type resolution fails for Loire credentials because the bundled ontology does not contain 2511 classes, and SHACL validation fails because the bundled shapes do not match Loire credential structure.
+
+Three approaches were considered:
+
+1. **Replace Tagus files with 2511:** Clean but breaks Path 1 (Tagus) backward compatibility — existing credentials would fail type resolution.
+2. **Bundle both alongside, single type URI config:** Both ontology files loaded, but only one set of type URIs configured. Fails because the hierarchies are disconnected — a single `participant.type` URI cannot match both `gax-core:Participant` and `gx:2511#Participant`.
+3. **Bundle both alongside, per-format type URI resolution:** Both ontology files loaded into the schema store. `CredentialVerificationStrategy` uses the `CredentialFormat` from `FormatDetector` to select which type URIs to pass to `ClaimValidator.getSubjectType()`. Config carries both URI sets (`type` for 2511, `legacy-type` for gax-core).
+
+**Decision:** Option 3 — namespace coexistence with per-format type URI resolution.
+
+The ontology bundle includes both Tagus-era and Loire 2511 files:
+
+[cols="1,2,2",options="header"]
+|===
+| Type | Tagus (kept for Path 1) | Loire 2511 (new)
+| OWL ontology | `gax-core_generated.ttl`, `gax-trust-framework_generated.ttl`, `gx.ttl` | `gx-2511.ttl`
+| SHACL shapes | `mergedShapesGraph.ttl` | `gx-2511-shapes.ttl`
+|===
+
+Type URI configuration carries both sets:
+
+[source,yaml]
+----
+participant:
+  type: "https://w3id.org/gaia-x/2511#Participant"          # Loire (Path 2)
+  legacy-type: "https://w3id.org/gaia-x/core#Participant"    # Tagus (Path 1)
+resource:
+  type: "https://w3id.org/gaia-x/2511#Resource"
+  legacy-type: "https://w3id.org/gaia-x/core#Resource"
+service-offering:
+  type: "https://w3id.org/gaia-x/2511#ServiceOffering"
+  legacy-type: "https://w3id.org/gaia-x/core#ServiceOffering"
+----
+
+Format-aware resolution in `CredentialVerificationStrategy.resolveBaseClass()`:
+
+* `GAIAX_V2_LOIRE` → uses `type` (2511 URIs)
+* `GAIAX_V1_TAGUS` → uses `legacy-type` (gax-core URIs)
+* `VC2_DANUBETECH` → skips Gaia-X type resolution entirely (domain-specific ontologies)
+
+==== Stripped Ontology: Why the Registry OWL Cannot Be Used Directly
+
+The official Gaia-X 2511 OWL file from the registryfootnote:[https://registry.lab.gaia-x.eu/development/owl/2511[Gaia-X Registry — OWL 2511]] is ~2.9 MB (~58,000 lines) and cannot be bundled as-is. It contains approximately 7,000 enum individuals whose IRIs embed a second `#` in the fragment component (e.g., `\https://w3id.org/gaia-x/2511#CountryNameAlpha2#SM`). These are not valid IRIs per RFC 3987footnote:[https://www.rfc-editor.org/rfc/rfc3987[RFC 3987 — Internationalized Resource Identifiers (IRIs)]]. Apache Jena emits one WARN log line per invalid IRI, which causes two problems:
+
+1. **Test suite noise:** Thousands of warnings bury real errors in log output, making test failures difficult to diagnose.
+2. **Apparent hangs:** The volume of log output slows test execution to the point where the suite appears to hang.
+
+The catalogue's `SchemaStoreImpl` only needs the **class hierarchy** (`owl:Class` declarations and `rdfs:subClassOf` relationships) for type resolution via `ClaimValidator.getSubjectType()`. Data properties, annotation properties, OWL restrictions, and enum individuals are not queried by the type resolution SPARQL and are therefore unnecessary.
+
+The bundled `gx-2511.ttl` is a **stripped extraction** containing only:
+
+* The `owl:Ontology` declaration — required because `SchemaStoreImpl.analyzeAndValidate()` classifies files by checking for `owl:Ontology`, `sh:NodeShape`, or `skos:ConceptScheme`; without it the file would not be recognized as an ontology
+* All `owl:Class` declarations
+* All direct `rdfs:subClassOf` relationships — the extraction script handles the 2511 source pattern where blank-node OWL restrictions are interleaved with direct superclass references (e.g., `rdfs:subClassOf [ a owl:Restriction ; ... ], gx:ComputeServiceOffering`)
+
+The following constructs are intentionally omitted:
+
+[cols="2,3",options="header"]
+|===
+| Omitted construct | Effect
+| Enum individuals (~7,000) | Carry the invalid double-`#` IRIs. Not used by type resolution.
+| `owl:Restriction` blank nodes | Property cardinality/value constraints on instances. Not queried by `getSubjectType()`.
+| `owl:equivalentClass` | Would cause the OWL reasoner to infer mutual `rdfs:subClassOf`. Currently absent from the 2511 core hierarchy.
+| `owl:intersectionOf` / `owl:unionOf` | Inferred subclass from set-theoretic definitions. Not present in 2511.
+| Data/annotation properties | Not queried by type resolution.
+|===
+
+The extraction is performed by `fc-tools/extract-ontology-hierarchy.py`, which parses the full registry TTL and writes a minimal hierarchy file. When the Gaia-X registry publishes updated 2511 ontology versions, the extraction must be re-run and tests verified:
+
+[source,bash]
+----
+# 1. Download the new full OWL file
+curl -o /tmp/gx-full.ttl https://registry.lab.gaia-x.eu/development/owl/2511
+
+# 2. Run the extraction script (from the federated-catalogue repo root)
+python3 fc-tools/extract-ontology-hierarchy.py \
+    --input  /tmp/gx-full.ttl \
+    --output fc-service-core/src/main/resources/defaultschema/ontology/gx-2511.ttl \
+    --ontology-iri https://w3id.org/gaia-x/2511 \
+    --source-url https://registry.lab.gaia-x.eu/development/owl/2511
+
+# 3. Run tests to verify the hierarchy is intact
+mvn test -pl fc-service-core -Dtest=LoireTypeResolutionTest,SchemaValidationServiceTest,SchemaStoreTest
+----
+
+[NOTE]
+====
+If a future 2511 spec version introduces `owl:equivalentClass`, `owl:intersectionOf`, or `owl:unionOf` for the core classes (`Participant`, `ServiceOffering`, `Resource`), type resolution will silently break because the stripped ontology omits these constructs. The extraction script must be updated to preserve them in that case.
+====
+
+[IMPORTANT]
+====
+**Production upgrade caveat:** `SchemaStoreImpl.initializeDefaultSchemas()` only loads bundled ontology and SHACL files when the schema table is empty (`dao.getSchemaCount() == 0`). On existing deployments that already have schemas in PostgreSQL, adding new 2511 files to the classpath will **not** trigger auto-loading on restart. The new ontology and shapes are silently ignored, and Loire type resolution fails without error. To pick up the new files, either clear the schema table before restart (via the Schema Store API or a Liquibase migration) or start with a fresh database.
+====
+
+**Rationale:**
+
+* Bundling both ontology sets allows the composite schema graph to resolve types from both Tagus and Loire credentials — essential during the ecosystem migration period.
+* Per-format URI selection avoids the disconnected-graph problem without requiring artificial `rdfs:subClassOf` links between the two namespaces (which would be semantically incorrect).
+* SHACL coexistence is safe: closed shapes on the 2511 side do not interfere with Tagus credentials because shape targets use different class URIs.
+* 2511 OWL and SHACL files are bundled as classpath resources (fetched from the Gaia-X registry at development time), avoiding a runtime dependency on registry availability. The OWL file is stripped to class hierarchy only to avoid Jena IRI parse warnings from invalid enum individual IRIs (see above).
+* The JSON-LD context for 2511 is configured via `doc-loader.additional-context` (fetched and Caffeine-cached at startup), following the same pattern as existing Tagus context entries.
+* Path 3 (non-Gaia-X VC 2.0) intentionally bypasses Gaia-X type resolution — future trust framework support for non-Gaia-X federations will add pluggable type resolution.
+
