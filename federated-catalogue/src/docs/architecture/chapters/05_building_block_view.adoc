@@ -887,20 +887,20 @@ The schema metadata is stored in the metadata store, using the following data mo
 ....
 erDiagram
     SCHEMAFILE {
-        BIGINT id PK "sequence: schemafiles_id_seq"
-        VARCHAR schemaid UK "unique business key"
+        BIGINT id PK
+        VARCHAR schemaid UK
         VARCHAR namehash
         TIMESTAMP created_at
         TIMESTAMP modified_at
         VARCHAR created_by
         VARCHAR modified_by
-        VARCHAR type "ONTOLOGY | SHAPE | VOCABULARY"
+        VARCHAR type
         TEXT content
     }
 
     SCHEMATERM {
-        BIGINT id PK "sequence: schematerms_id_seq"
-        VARCHAR term "globally unique by DB constraint"
+        BIGINT id PK
+        VARCHAR term
         BIGINT schema_file_id FK
     }
 
@@ -911,6 +911,14 @@ erDiagram
 
     SCHEMAFILE ||--o{ SCHEMATERM : defines
 ....
+
+.Schema table notes
+****
+. `schemaid` is the unique business key (natural identifier, enforced by a DB unique constraint).
+. `type` valid values: `ONTOLOGY`, `SHAPE`, `VOCABULARY`.
+. `term` is globally unique across all schema files (enforced by a DB unique constraint).
+. `SCHEMAFILE.id` uses sequence `schemafiles_id_seq`; `SCHEMATERM.id` uses `schematerms_id_seq`.
+****
 
 ==== Validator Cache
 
@@ -982,14 +990,14 @@ Audited entities: `Asset` (`assets`), `SchemaFile` (`schemafiles`), `SchemaTerm`
 ....
 erDiagram
     REVINFO {
-        INTEGER rev PK "sequence: revinfo_seq"
-        BIGINT revtstmp "epoch millis"
+        INTEGER rev PK
+        BIGINT revtstmp
     }
 
     ASSETS_AUD {
         BIGINT id PK
-        INTEGER rev PK_FK
-        SMALLINT revtype "0=INSERT 1=UPDATE 2=DELETE"
+        INTEGER rev FK "composite PK with id"
+        SMALLINT revtype
         VARCHAR asset_hash
         TEXT subjectid
         TEXT issuer
@@ -1010,7 +1018,7 @@ erDiagram
 
     SCHEMAFILES_AUD {
         BIGINT id PK
-        INTEGER rev PK_FK
+        INTEGER rev FK "composite PK with id"
         SMALLINT revtype
         VARCHAR schemaid
         VARCHAR namehash
@@ -1024,7 +1032,7 @@ erDiagram
 
     SCHEMATERMS_AUD {
         BIGINT id PK
-        INTEGER rev PK_FK
+        INTEGER rev FK "composite PK with id"
         SMALLINT revtype
         VARCHAR term
         BIGINT schema_file_id
@@ -1041,78 +1049,8 @@ erDiagram
 . Audit tables are managed by Liquibase (changeset `2026-03-25-envers-*`), not by Hibernate's `hbm2ddl` auto-generation.
 . The `created_by` and `modified_by` columns in `assets_aud` and `schemafiles_aud` are populated by `SecurityAuditorAware`, which reads the JWT subject from the Spring Security context. They are null for unauthenticated or background operations, and for rows that predate CAT-FR-LM-03.
 . Known limitation: bulk JPQL `DELETE` or `UPDATE` statements bypass Envers because they do not trigger JPA entity lifecycle events. All current DAO code uses entity-level operations, so this limitation does not apply in practice.
-****
-
-[[_audit_history]]
-==== Audit History (Hibernate Envers)
-
-The catalogue uses Hibernate Enversfootnote:[https://hibernate.org/orm/envers/[Hibernate Envers — Entity Auditing]] to maintain an audit trail for assets and schemas. Every insert, update, and delete on an audited entity is recorded in a corresponding `_aud` shadow table, linked to a global revision in the `REVINFO` table.
-
-Audited entities: `Asset` (`assets`), `SchemaFile` (`schemafiles`), `SchemaTerm` (`schematerms`).
-
-[mermaid, width=2000]
-....
-erDiagram
-    REVINFO {
-        INTEGER rev PK "sequence: revinfo_seq"
-        BIGINT revtstmp "epoch millis"
-    }
-
-    ASSETS_AUD {
-        BIGINT id PK
-        INTEGER rev PK_FK
-        SMALLINT revtype "0=INSERT 1=UPDATE 2=DELETE"
-        VARCHAR asset_hash
-        TEXT subjectid
-        TEXT issuer
-        TIMESTAMP uploadtime
-        TIMESTAMP statustime
-        TIMESTAMP expirationtime
-        SMALLINT status
-        TEXT content
-        VARCHAR content_type
-        BIGINT file_size
-        VARCHAR original_filename
-        TEXT change_comment
-        VARCHAR created_by
-        VARCHAR modified_by
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ last_modified_at
-    }
-
-    SCHEMAFILES_AUD {
-        BIGINT id PK
-        INTEGER rev PK_FK
-        SMALLINT revtype
-        VARCHAR schemaid
-        VARCHAR namehash
-        TIMESTAMP created_at
-        TIMESTAMP modified_at
-        VARCHAR created_by
-        VARCHAR modified_by
-        VARCHAR type
-        TEXT content
-    }
-
-    SCHEMATERMS_AUD {
-        BIGINT id PK
-        INTEGER rev PK_FK
-        SMALLINT revtype
-        VARCHAR term
-        BIGINT schema_file_id
-    }
-
-    REVINFO ||--o{ ASSETS_AUD : tracks
-    REVINFO ||--o{ SCHEMAFILES_AUD : tracks
-    REVINFO ||--o{ SCHEMATERMS_AUD : tracks
-....
-
-.Audit table notes
-****
-. Each `_aud` table mirrors the columns of its source table plus `rev` (FK to REVINFO) and `revtype` (0=INSERT, 1=UPDATE, 2=DELETE). The composite primary key is `(id, rev)`.
-. Audit tables are managed by Liquibase (changeset `2026-03-25-envers-*`), not by Hibernate's `hbm2ddl` auto-generation.
-. The `created_by` and `modified_by` columns in `assets_aud` and `schemafiles_aud` are populated by `SecurityAuditorAware`, which reads the JWT subject from the Spring Security context. They are null for unauthenticated or background operations, and for rows that predate CAT-FR-LM-03.
-. Known limitation: bulk JPQL `DELETE` or `UPDATE` statements bypass Envers because they do not trigger JPA entity lifecycle events. All current DAO code uses entity-level operations, so this limitation does not apply in practice.
+. `REVINFO.rev` uses sequence `revinfo_seq`. `revtstmp` is a Unix epoch timestamp in milliseconds.
+. `revtype` encodes the operation: 0=INSERT, 1=UPDATE, 2=DELETE.
 ****
 
 [[_verification_profiles]]
@@ -1329,6 +1267,34 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 | `federated-catalogue.rdf.content-types` | `[application/ld+json]` | MIME types treated as RDF (triggers verification pipeline)
 | `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
 |===
+
+[[_admin_api]]
+==== Admin API
+
+The Admin API exposes runtime configuration and observability endpoints for catalogue administrators. All `/admin/**` endpoints require the `ADMIN_ALL` permission (see <<_authorization>>).
+
+Five delegate services in `fc-service-server` implement the admin endpoints, each corresponding to a section of the Admin UI:
+
+[options="header",cols="1,2,2"]
+|===
+| Service | Implements | Endpoints
+| `AdminDashboardService` | `AdminApiDelegate` | `GET /admin/me` (access check), `GET /admin/stats` (metrics), `GET /admin/health` (component health), `GET /admin/keycloak-url`
+| `TrustFrameworkAdminService` | `TrustFrameworkAdminApiDelegate` | List, toggle, and update trust frameworks; checks live connectivity per framework on list
+| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts. Only SHACL enforcement is active; JSON Schema, XML Schema, and OWL toggles persist to `admin_config` but are not yet wired to the verification pipeline (planned after CAT-FR-CO-05)
+| `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
+|===
+
+One component in `fc-service-core` reads admin-controlled settings during normal catalogue operations:
+
+[options="header",cols="1,1,2"]
+|===
+| Component | Triggered by | Effect of admin configuration
+| `CredentialVerificationStrategy` | Credential verification | Reads `trust_frameworks` for the Gaia-X toggle; reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline
+|===
+
+NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
+
+The `trust_frameworks` and `admin_config` tables that back this configuration layer are documented under <<section-concepts,Cross-cutting Concepts — Admin Configuration Persistence>>.
 
 === Level 3: Shared data structures
 
