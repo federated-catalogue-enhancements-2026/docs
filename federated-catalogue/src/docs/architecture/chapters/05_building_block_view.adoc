@@ -163,7 +163,7 @@ NOTE: Non-RDF schemas (JSON Schema, XML Schema) bypass the Schema Store entirely
 | Asset Store | Storing and retrieving of credential files and non-RDF assets, and handling their lifecycle and versioning. Assets are stored in the File Store, whereas metadata is kept in the Metadata Store. Non-RDF assets bypass verification and graph storage.
 | RDF Detector | Classifies uploaded content as RDF or non-RDF based on a configurable MIME type allowlist and content inspection. For `application/json`, the detector checks for a JSON-LD `@context` key to distinguish JSON-LD (RDF) from plain JSON (non-RDF). Note that `application/schema+json` (JSON Schema) and `application/xml` (XSD) are always classified as non-RDF — even though they are schema formats, they are not RDF and do not enter the RDF verification pipeline.
 | Asset Upload Service | Orchestrates the dual-path upload flow: extracts request data, delegates to `RdfDetector` for classification, then routes to either the verification pipeline (RDF) or direct asset storage (non-RDF).
-| Asset Link Service | Manages bidirectional links between machine-readable (RDF) assets and human-readable representations (e.g., PDF, DOCX). Link records are stored in the `asset_links` table; supplementary `fcmeta:hasHumanReadable` / `fcmeta:hasMachineReadable` RDF triples are written to the graph DB.
+| Asset Link Service | Manages bidirectional links between machine-readable (RDF) assets and human-readable representations (e.g., PDF, DOCX). Link metadata is stored directly on the `assets` table via an `asset_type` column and a `linked_asset_id` FK; supplementary `fcmeta:hasHumanReadable` / `fcmeta:hasMachineReadable` RDF triples are written to the graph DB.
 | Metadata Store | Database keeping all the required metadata for the modules. The Metadata Store is _owned_ by the _Store_ components. For separation, each component gets its own set of tables with no relation between them.
 | File Store | Storage system for persisting files (e.g., file system or object store/DB). Separate instances exist for schemas/contexts and for non-RDF assets.
 |===
@@ -1292,43 +1292,37 @@ Accepted content types for human-readable representations:
 | `text/plain` | Plain text
 |===
 
-Each link is stored as two rows in the `asset_links` table — one per direction — using
-`AssetLinkType` values `HAS_HUMAN_READABLE` (MR → HR) and `HAS_MACHINE_READABLE` (HR → MR).
-The unique constraint `uq_asset_link` enforces a maximum of one HR per MR asset and one MR per
-HR asset. Corresponding RDF triples (`fcmeta:hasHumanReadable`, `fcmeta:hasMachineReadable`) are
-also written to the graph DB as supplementary metadata. Graph writes are non-fatal: a failure is
-logged but does not roll back the PostgreSQL transaction.
-
-**Cascade delete:** Deleting an MR asset also deletes its linked HR asset and all link rows.
-Deleting an HR asset directly removes only the link rows; the MR asset is preserved.
-
-**Graph rebuild:** `POST /admin/graph/rebuild` restores `fcmeta:hasHumanReadable` and
-`fcmeta:hasMachineReadable` triples from the `asset_links` table.
-
-The link metadata is stored using the following data model:
+Link metadata is stored directly on the `assets` table via two columns added by Liquibase
+changeset `012-asset-links.xml`:
 
 [mermaid, width=2000]
 ....
 erDiagram
-    ASSET_LINKS {
+    ASSETS {
         BIGINT id PK
-        TEXT source_id
-        TEXT target_id
-        VARCHAR link_type
-        TIMESTAMPTZ created_at
-        VARCHAR created_by
-        VARCHAR modified_by
-        TIMESTAMPTZ last_modified_at
+        VARCHAR asset_type "MACHINE_READABLE | HUMAN_READABLE | GENERIC"
+        BIGINT linked_asset_id FK "→ assets.id ON DELETE SET NULL"
     }
 ....
 
-.Asset links table notes
+.Asset link columns notes
 ****
-. Two rows are inserted per logical link: one with `link_type = HAS_HUMAN_READABLE` (MR → HR) and one with `link_type = HAS_MACHINE_READABLE` (HR → MR).
-. The unique constraint `uq_asset_link` covers `(source_id, target_id, link_type)`.
-. `source_id` and `target_id` store asset IRIs (referencing `assets.subjectid`). No FK constraint is used — cascade delete is handled in application code by `AssetLinkService`.
-. Auditing uses Spring Data JPA `@AuditingEntityListener` (not Hibernate Envers) — `created_by`, `modified_by`, `created_at`, `last_modified_at` are columns on the table itself, not in a separate `_aud` shadow table.
+. `asset_type VARCHAR(50)` — nullable; values: `MACHINE_READABLE`, `HUMAN_READABLE`, `GENERIC`. Identifies which variant this asset represents.
+. `linked_asset_id BIGINT` — nullable FK referencing `assets.id`. `ON DELETE SET NULL` ensures that deleting the referenced asset clears the pointer without a hard cascade.
+. Unique index `idx_assets_linked_asset_id` on `linked_asset_id` enforces a strict 1:1 relationship — each HR asset can be linked to at most one MR asset and vice versa.
+. Audited automatically by Hibernate Envers via the `assets_aud` shadow table — no separate audit columns on `assets` itself.
 ****
+
+Corresponding RDF triples (`fcmeta:hasHumanReadable`, `fcmeta:hasMachineReadable`) are written to
+the graph DB as supplementary metadata. Graph writes are non-fatal: a failure is logged but does
+not roll back the PostgreSQL transaction.
+
+**Cascade delete:** Deleting an MR asset also deletes its linked HR asset (application-level cascade
+in `AssetStoreImpl`). The `ON DELETE SET NULL` FK constraint prevents orphan pointer errors at the
+database level when the HR asset row is removed.
+
+**Graph rebuild:** `POST /admin/graph/rebuild` restores `fcmeta:hasHumanReadable` and
+`fcmeta:hasMachineReadable` triples from the `linked_asset_id` column in the `assets` table.
 
 [[_admin_api]]
 ==== Admin API
