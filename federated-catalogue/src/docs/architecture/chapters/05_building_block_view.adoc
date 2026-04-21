@@ -1300,7 +1300,7 @@ changeset `012-asset-links.xml`:
 erDiagram
     ASSETS {
         BIGINT id PK
-        VARCHAR asset_type "MACHINE_READABLE | HUMAN_READABLE | GENERIC"
+        VARCHAR asset_type "MACHINE_READABLE | HUMAN_READABLE"
         BIGINT linked_asset_id FK "→ assets.id ON DELETE SET NULL"
     }
 ....
