@@ -1294,6 +1294,23 @@ Accepted content types for human-readable representations:
 | `text/plain` | Plain text
 |===
 
+These are the default values of `federated-catalogue.assets.human-readable-content-types`.
+The same allowlist is enforced for both `POST /assets/{mrId}/human-readable` and
+`PUT /assets/{mrId}/human-readable`.
+
+* `application/pdf` and `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+  cover the main document formats typically exchanged as human-facing attachments.
+* `text/html` supports web-renderable human-readable pages.
+* `text/plain` supports lightweight textual explanations, notes, or readme-style content.
+* Validation is strict against the configured `Content-Type` header. Unsupported types are
+  rejected with `400 Bad Request`.
+* A missing `Content-Type` is treated as `application/octet-stream`, which is not accepted by
+  default and is therefore rejected as well.
+
+This restriction is intentional: the human-readable link endpoint is meant for documents that a
+person can read directly. Generic binary files can still be uploaded as regular assets, but they
+are not accepted as human-readable representations unless their MIME type is explicitly allowed.
+
 Link metadata is stored directly on the `assets` table via two columns added by Liquibase
 changeset `012-asset-links.xml`:
 
