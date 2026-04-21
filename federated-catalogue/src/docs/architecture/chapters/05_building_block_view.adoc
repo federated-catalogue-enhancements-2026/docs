@@ -254,7 +254,7 @@ classDiagram
         +verifyResourceCredential(payload) CredentialVerificationResultResource
         +verifyCredential(payload) CredentialVerificationResult
         +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) CredentialVerificationResult
-        +extractClaims(payload) List~CredentialClaim~
+        +extractClaims(payload) List~RdfClaim~
         +verifyCredentialAgainstSchema(payload, schema) SchemaValidationResult
         +verifyCredentialAgainstCompositeSchema(payload) SchemaValidationResult
     }
@@ -281,14 +281,14 @@ classDiagram
     class VerificationStrategy {
         <<interface>>
         +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
-        +extractClaims(payload) List~CredentialClaim~
+        +extractClaims(payload) List~RdfClaim~
         +setBaseClassUri(baseClass, uri) void
     }
     class CredentialVerificationStrategy {
         -filter: ProtectedNamespaceFilter
         -jwtSignatureVerifier: JwtSignatureVerifier
         -formatDetector: FormatDetector
-        +extractClaims(payload) List~CredentialClaim~
+        +extractClaims(payload) List~RdfClaim~
         +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
     }
     class FormatDetector {
@@ -352,7 +352,7 @@ classDiagram
         +filterModel(model, source) FilteredModel
     }
     class FilteredClaims {
-        +claims() List~CredentialClaim~
+        +claims() List~RdfClaim~
         +warning() String
         +hasWarning() boolean
     }
@@ -574,7 +574,7 @@ public interface GraphStore {
      * @param claimList List of claims to be added to the Graph DB.
      * @param credentialSubject contains a credential unique identifier
      */
-    void addClaims(List<CredentialClaim> claimList, String credentialSubject);
+    void addClaims(List<RdfClaim> claimList, String credentialSubject);
 
     /**
      * Deletes all claims in the Graph DB of a given credential
@@ -1311,7 +1311,7 @@ public class CredentialVerificationResult extends VerificationResult {
   private String id;
 
   /** The claims extracted from the credential. */
-  private List<CredentialClaim> claims;
+  private List<RdfClaim> claims;
 
   /** The validators that signed the credential. */
   private List<Validator> validators;
@@ -1348,13 +1348,13 @@ If the credential is a Service Offering, the ID is stored in the `issuer` variab
 /**
  * POJO Class for holding a claim.
  */
-public class CredentialClaim {
+public class RdfClaim {
 
     private String subject;
     private String predicate;
     private String object;
 
-    public CredentialClaim(String subject, String predicate, String object) {
+    public RdfClaim(String subject, String predicate, String object) {
         this.subject = subject;
         this.predicate = predicate;
         this.object = object;
