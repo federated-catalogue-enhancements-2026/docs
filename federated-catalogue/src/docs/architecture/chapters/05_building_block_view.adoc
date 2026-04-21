@@ -1275,7 +1275,9 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 The Asset Link Service manages bidirectional links between machine-readable (RDF) assets and
 human-readable representations (e.g., PDF, DOCX, HTML, plain text).
 
-Links are created via `POST /assets/{mrId}/human-readable`. Content retrieval is exposed via
+Links are created via `POST /assets/{mrId}/human-readable` (201 Created; 409 Conflict if an HR
+asset is already linked) and replaced via `PUT /assets/{mrId}/human-readable` (200 OK; 404 Not
+Found if no HR asset is linked yet). Content retrieval is exposed via
 `GET /assets/{mrId}/human-readable` (returns the HR asset bytes) and
 `GET /assets/{hrId}/machine-readable` (returns the MR asset bytes). The linked asset IRI is
 surfaced in the metadata response as `humanReadableId` (on MR assets) and `machineReadableId`
