@@ -163,6 +163,7 @@ NOTE: Non-RDF schemas (JSON Schema, XML Schema) bypass the Schema Store entirely
 | Asset Store | Storing and retrieving of credential files and non-RDF assets, and handling their lifecycle and versioning. Assets are stored in the File Store, whereas metadata is kept in the Metadata Store. Non-RDF assets bypass verification and graph storage.
 | RDF Detector | Classifies uploaded content as RDF or non-RDF based on a configurable MIME type allowlist and content inspection. For `application/json`, the detector checks for a JSON-LD `@context` key to distinguish JSON-LD (RDF) from plain JSON (non-RDF). Note that `application/schema+json` (JSON Schema) and `application/xml` (XSD) are always classified as non-RDF — even though they are schema formats, they are not RDF and do not enter the RDF verification pipeline.
 | Asset Upload Service | Orchestrates the dual-path upload flow: extracts request data, delegates to `RdfDetector` for classification, then routes to either the verification pipeline (RDF) or direct asset storage (non-RDF).
+| Validation Result Storage | Persists the outcome of on-demand credential validation. Each `ValidationResult` record is stored in PostgreSQL (`validation_result` table) and projected as `fcmeta:` triples in the graph store (`SYNCED`/`FAILED`). Retrieval is exposed via `GET /assets/{id}/validations` (paginated) and `GET /validations/{id}`. After a graph backend reset, `GraphRebuilder.rebuildValidationResults()` re-projects all records from PostgreSQL.
 | Metadata Store | Database keeping all the required metadata for the modules. The Metadata Store is _owned_ by the _Store_ components. For separation, each component gets its own set of tables with no relation between them.
 | File Store | Storage system for persisting files (e.g., file system or object store/DB). Separate instances exist for schemas/contexts and for non-RDF assets.
 |===
@@ -750,6 +751,67 @@ The asset metadata is stored in the metadata store, using the following data mod
 . The table is audited by Hibernate Envers — all insert, update, and delete operations are tracked in the `assets_aud` shadow table (see <<_audit_history>>).
 . The `created_by` and `modified_by` columns are populated by Spring Data JPA auditing via `SecurityAuditorAware`, which reads the JWT subject from the security context. They are null for unauthenticated operations and for rows that predate CAT-FR-LM-03.
 ****
+
+[[_validation_result_storage]]
+==== Validation Result Storage
+
+Stores the outcome of on-demand asset validation as a `ValidationResult` record in PostgreSQL and projects it into the graph store as `fcmeta:` triples, creating a queryable validation history for each asset without re-running verification.
+
+[mermaid, width=2000]
+....
+classDiagram
+    class ValidationResultStore {
+        <<interface>>
+        +store(record: ValidationResultRecord) Long
+        +getByAssetId(assetId: String, pageable: Pageable) Page~ValidationResult~
+        +getById(id: Long) Optional~ValidationResult~
+    }
+    class ValidationResultGraphWriter {
+        +write(result: ValidationResult, graphStore: GraphStore) void
+    }
+    class ValidationResult {
+        +id: Long
+        +assetIds: String[]
+        +validatorIds: String[]
+        +validatorType: String
+        +conforms: boolean
+        +validatedAt: Instant
+        +report: String
+        +contentHash: String
+        +graphSyncStatus: GraphSyncStatus
+        +createdAt: Instant
+    }
+    ValidationResultStore ..> ValidationResult : produces
+    ValidationResultStore ..> ValidationResultGraphWriter : delegates graph write
+....
+
+.VALIDATION_RESULT table
+[cols="1,2,1,3", options="header"]
+|===
+| Type | Column | Key | Note
+
+| BIGINT | id | PK | Surrogate key, sequence-generated (allocation size 50)
+| TEXT[] | asset_ids | | Asset subject IRI(s) — GIN indexed for efficient `= ANY()` lookups
+| TEXT[] | validator_ids | | Validator IDs (schema IRIs or trust framework IDs) used in this run
+| VARCHAR(64) | validator_type | | `SCHEMA` or `TRUST_FRAMEWORK`
+| BOOLEAN | conforms | | True if validation passed; false if violations were found
+| TIMESTAMPTZ | validated_at | | Timestamp of the validation run (caller-supplied, not DB insertion time)
+| JSONB | report | | Serialised validation report; null for passing validations
+| VARCHAR(64) | content_hash | | SHA-256 hex digest over canonical JSON of core fields — tamper detection
+| VARCHAR(16) | graph_sync_status | | `SYNCED` or `FAILED` — set atomically when the record is first stored
+| TIMESTAMPTZ | created_at | | DB insertion time, populated by Spring Data JPA `@CreatedDate`
+|===
+
+The two REST endpoints for validation result retrieval are:
+
+[cols="2,3", options="header"]
+|===
+| Endpoint | Description
+| `GET /assets/{id}/validations` | Paginated list of `StoredValidationResult` for the asset identified by IRI `{id}`. Returns 200 with an empty list if the asset exists but has no stored validations; 404 if the asset does not exist.
+| `GET /validations/{id}` | Single `StoredValidationResult` by its surrogate database ID. Returns 404 if not found.
+|===
+
+After a graph backend reset, `GraphRebuilder.rebuildValidationResults()` re-projects all validation result records as `fcmeta:` triples from PostgreSQL, restoring graph state without re-running verification. Each record is updated to `SYNCED` on success or `FAILED` if the graph write fails.
 
 ==== Schema Management Store
 
