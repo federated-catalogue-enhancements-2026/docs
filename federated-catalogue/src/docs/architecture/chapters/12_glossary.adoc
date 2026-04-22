@@ -72,4 +72,22 @@ The identifier must be a valid IRI (see ADR 7).
 |EnvelopedVerifiableCredential
 |A W3C VC 2.0 / ICAM 24.07 mechanism for embedding inner Verifiable Credentials inside a VP JWT. Each inner VC is wrapped as a JSON object with `type: "EnvelopedVerifiableCredential"` and an `id` field containing a `data:` URL (`data:application/vc+jwt,eyJ...`) from which the compact JWT is extracted.
 
+|Machine-Readable Asset
+|An asset variant intended for automated processing — typically an RDF credential (JSON-LD), JSON, or XML file. When linked to a human-readable asset, its `asset_type` column is set to `MACHINE_READABLE` and `linked_asset_id` points to the corresponding human-readable asset. Surfaced in API responses via the `humanReadableId` field.
+
+|Human-Readable Asset
+|An asset variant intended for human consumption — typically a PDF, DOCX, HTML, or plain-text file. Uploaded via `POST /assets/{id}/human-readable`. When linked, `asset_type` is `HUMAN_READABLE` and `linked_asset_id` points to the corresponding machine-readable asset. Surfaced in API responses via the `machineReadableId` field.
+
+|Asset Link
+|A bidirectional association between a machine-readable asset and a human-readable asset. Stored as two columns on the `assets` table (`asset_type` and `linked_asset_id` FK). Mirrored in the graph DB as `fcmeta:hasHumanReadable` and `fcmeta:hasMachineReadable` RDF triples for semantic queryability.
+
+|AssetType
+|An enum distinguishing asset variants: `MACHINE_READABLE`, `HUMAN_READABLE`, `GENERIC` (no link). Stored in the `asset_type` column on the `assets` table.
+
+|fcmeta:hasHumanReadable
+|RDF property in the protected `fcmeta:` namespace (`https://projects.eclipse.org/projects/technology.xfsc/federated-catalogue/meta#`) written to the graph DB when an asset link is created. Points from a machine-readable asset's IRI to its human-readable counterpart's IRI.
+
+|fcmeta:hasMachineReadable
+|RDF property in the protected `fcmeta:` namespace written to the graph DB when an asset link is created. Points from a human-readable asset's IRI to its machine-readable counterpart's IRI.
+
 |===

@@ -163,6 +163,7 @@ NOTE: Non-RDF schemas (JSON Schema, XML Schema) bypass the Schema Store entirely
 | Asset Store | Storing and retrieving of credential files and non-RDF assets, and handling their lifecycle and versioning. Assets are stored in the File Store, whereas metadata is kept in the Metadata Store. Non-RDF assets bypass verification and graph storage.
 | RDF Detector | Classifies uploaded content as RDF or non-RDF based on a configurable MIME type allowlist and content inspection. For `application/json`, the detector checks for a JSON-LD `@context` key to distinguish JSON-LD (RDF) from plain JSON (non-RDF). Note that `application/schema+json` (JSON Schema) and `application/xml` (XSD) are always classified as non-RDF — even though they are schema formats, they are not RDF and do not enter the RDF verification pipeline.
 | Asset Upload Service | Orchestrates the dual-path upload flow: extracts request data, delegates to `RdfDetector` for classification, then routes to either the verification pipeline (RDF) or direct asset storage (non-RDF).
+| Asset Link Service | Manages bidirectional links between machine-readable (RDF) assets and human-readable representations (e.g., PDF, DOCX). Link metadata is stored directly on the `assets` table via an `asset_type` column and a `linked_asset_id` FK; supplementary `fcmeta:hasHumanReadable` / `fcmeta:hasMachineReadable` RDF triples are written to the graph DB.
 | Metadata Store | Database keeping all the required metadata for the modules. The Metadata Store is _owned_ by the _Store_ components. For separation, each component gets its own set of tables with no relation between them.
 | File Store | Storage system for persisting files (e.g., file system or object store/DB). Separate instances exist for schemas/contexts and for non-RDF assets.
 |===
@@ -1268,6 +1269,80 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 | `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
 |===
 
+[[_asset_link_service]]
+==== Asset Link Service
+
+The Asset Link Service manages bidirectional links between machine-readable (RDF) assets and
+human-readable representations (e.g., PDF, DOCX, HTML, plain text).
+
+Links are created via `POST /assets/{mrId}/human-readable` (201 Created; 409 Conflict if an HR
+asset is already linked) and replaced via `PUT /assets/{mrId}/human-readable` (200 OK; 404 Not
+Found if no HR asset is linked yet). Content retrieval is exposed via
+`GET /assets/{mrId}/human-readable` (returns the HR asset bytes) and
+`GET /assets/{hrId}/machine-readable` (returns the MR asset bytes). The linked asset IRI is
+surfaced in the metadata response as `humanReadableId` (on MR assets) and `machineReadableId`
+(on HR assets).
+
+Accepted content types for human-readable representations:
+
+[options="header",cols="1,2"]
+|===
+| MIME type | Format
+| `application/pdf` | PDF
+| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | DOCX
+| `text/html` | HTML
+| `text/plain` | Plain text
+|===
+
+These are the default values of `federated-catalogue.assets.human-readable-content-types`.
+The same allowlist is enforced for both `POST /assets/{mrId}/human-readable` and
+`PUT /assets/{mrId}/human-readable`.
+
+* `application/pdf` and `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+  cover the main document formats typically exchanged as human-facing attachments.
+* `text/html` supports web-renderable human-readable pages.
+* `text/plain` supports lightweight textual explanations, notes, or readme-style content.
+* Validation is strict against the configured `Content-Type` header. Unsupported types are
+  rejected with `400 Bad Request`.
+* A missing `Content-Type` is treated as `application/octet-stream`, which is not accepted by
+  default and is therefore rejected as well.
+
+This restriction is intentional: the human-readable link endpoint is meant for documents that a
+person can read directly. Generic binary files can still be uploaded as regular assets, but they
+are not accepted as human-readable representations unless their MIME type is explicitly allowed.
+
+Link metadata is stored directly on the `assets` table via two columns added by Liquibase
+changeset `012-asset-links.xml`:
+
+[mermaid, width=2000]
+....
+erDiagram
+    ASSETS {
+        BIGINT id PK
+        VARCHAR asset_type "MACHINE_READABLE | HUMAN_READABLE"
+        BIGINT linked_asset_id FK "→ assets.id ON DELETE SET NULL"
+    }
+....
+
+.Asset link columns notes
+****
+. `asset_type VARCHAR(50)` — nullable; values: `MACHINE_READABLE`, `HUMAN_READABLE`, `GENERIC`. Identifies which variant this asset represents.
+. `linked_asset_id BIGINT` — nullable FK referencing `assets.id`. `ON DELETE SET NULL` ensures that deleting the referenced asset clears the pointer without a hard cascade.
+. Unique index `idx_assets_linked_asset_id` on `linked_asset_id` enforces a strict 1:1 relationship — each HR asset can be linked to at most one MR asset and vice versa.
+. Audited automatically by Hibernate Envers via the `assets_aud` shadow table — no separate audit columns on `assets` itself.
+****
+
+Corresponding RDF triples (`fcmeta:hasHumanReadable`, `fcmeta:hasMachineReadable`) are written to
+the graph DB as supplementary metadata. Graph writes are non-fatal: a failure is logged but does
+not roll back the PostgreSQL transaction.
+
+**Cascade delete:** Deleting an MR asset also deletes its linked HR asset (application-level cascade
+in `AssetStoreImpl`). The `ON DELETE SET NULL` FK constraint prevents orphan pointer errors at the
+database level when the HR asset row is removed.
+
+**Graph rebuild:** `POST /admin/graph/rebuild` restores `fcmeta:hasHumanReadable` and
+`fcmeta:hasMachineReadable` triples from the `linked_asset_id` column in the `assets` table.
+
 [[_admin_api]]
 ==== Admin API
 
@@ -1470,6 +1545,18 @@ public class Asset {
 
   /** Size of the stored content in bytes. */
   private Long fileSize;
+
+  /**
+   * IRI of the linked human-readable representation (e.g., a PDF document),
+   * if one has been attached to this machine-readable asset. Absent when no link exists.
+   */
+  private String humanReadableId;
+
+  /**
+   * IRI of the linked machine-readable asset, if this asset is a human-readable
+   * representation linked to a machine-readable parent. Absent when no link exists.
+   */
+  private String machineReadableId;
 }
 
 /**
