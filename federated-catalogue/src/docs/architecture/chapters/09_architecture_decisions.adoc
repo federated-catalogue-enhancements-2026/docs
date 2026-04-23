@@ -137,11 +137,12 @@ Key concepts:
 |===
 | Phase | Class Name | Rationale
 | Legacy | `SdClaim` | Original name tied to Self-Description terminology.
-| Current (CAT-NFR-01) | `CredentialClaim` | Only credentials produce claims in the current codebase.
-| Future (CAT-FR-GD-02) | `RdfClaim` | When non-credential RDF claim extraction is implemented (story 008), claims can originate from any RDF asset.
+| Current | `CredentialClaim` | Credentials claims use this marker class to differentiate them from generic triples.
+| Current | `RdfClaim` | Claims (Triples) that originate from any (non-credential) RDF asset. Superclass of `CredentialClaim`.
 |===
 
-**Rationale:** Naming for the current scope avoids premature abstraction. The rename to `RdfClaim` is deferred to the story (CAT-FR-GD-02) that actually introduces non-credential claim extraction, following a "name for what it is now, rename when scope expands" principle. This keeps each rename tied to a concrete implementation change rather than a speculative future.
+**Rationale:** Naming for the current scope avoids premature abstraction.
+The rename to `RdfClaim` was doen while adding non-credential claims extraction.
 
 === ADR 7: IRI-Based Asset Identification
 

@@ -143,7 +143,7 @@ The catalogue implementation is structured into two main components _fc-service-
 | Authorization | Handling the authorization, and user management in combination with the _Service_ and _Authentication_ component.
 | Authentication | This component stores the users and participant metadata.
 | Verification
-a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Also handles non-credential RDF assets (CAT-FR-GD-02). Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
+a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Also handles non-credential RDF assets. Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
 
 * **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
 * **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `VerificationStrategy` implementation (currently `CredentialVerificationStrategy`).
@@ -470,7 +470,7 @@ Claims pass through the `ProtectedNamespaceFilter` before being returned (see <<
 [[_non_credential_rdf_extraction]]
 ===== Non-Credential RDF Extraction
 
-For RDF assets that are not Gaia-X Credentials (CAT-FR-GD-02), `CredentialVerificationStrategy` short-circuits the credential verification pipeline when `FormatDetector` returns `UNKNOWN` and delegates to `JenaAllTriplesExtractor` instead.
+For RDF assets that are not verifiable credentials , `CredentialVerificationStrategy` short-circuits the credential verification pipeline when `FormatDetector` returns `UNKNOWN` and delegates to `JenaAllTriplesExtractor` instead.
 
 `JenaAllTriplesExtractor` uses Apache Jena to parse the raw RDF content and extract all triples.
 It tries each RDF serialization in order until one succeeds: JSON-LD → Turtle → N-Triples → RDF/XML.
@@ -500,7 +500,7 @@ Content classified as `UNKNOWN` (no recognized credential structure) is routed t
 | Format | Label | Detection criteria
 | Loire JWT (ICAM v24.07 / W3C VC-JOSE-COSE) | `GAIAX_V2_LOIRE` | JWT envelope with recognized `typ`/`cty` headers (see table below)
 | Generic VC 2.0 (JSON-LD or JWT with `vc`/`vp` wrapper) | `VC2_DANUBETECH` | VC 2.0 context present; does not match Loire header criteria
-| Non-credential RDF | `UNKNOWN` | No recognized credential format — all triples extracted via `JenaAllTriplesExtractor` (CAT-FR-GD-02)
+| Non-credential RDF | `UNKNOWN` | No recognized credential format — all triples extracted via `JenaAllTriplesExtractor`
 |===
 
 The detector accepts two families of JWT header values (see ADR 8):
