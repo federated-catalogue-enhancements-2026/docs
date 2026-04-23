@@ -293,29 +293,31 @@ Retrieve all triples stored in the graph:
 SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100
 ----
 
-===== All claims with credential subject
+===== All claims with asset IRI
 
-Retrieve all credential claims together with the credential subject they belong to, using RDF-star syntax:
+Retrieve all claims together with the asset IRI they belong to, using RDF-star syntax.
+The `cred:credentialSubject` predicate is the Fuseki backend's internal annotation that records the source asset IRI for each triple — for Verifiable Credentials this is the `credentialSubject` IRI; for non-credential RDF assets (Turtle, N-Triples, RDF/XML, JSON-LD) it is the asset's `@id` or UUID URN assigned by `IriGenerator`:
 
 [source,sparql]
 ----
 PREFIX cred: <https://www.w3.org/2018/credentials#>
 SELECT ?s ?p ?o ?cs
 WHERE {
-  << ?s ?p ?o >> cred:credentialSubject ?cs
+  <<(?s ?p ?o)>> cred:credentialSubject ?cs
 }
 LIMIT 100
 ----
 
-===== Claims for a specific credential subject
+===== Claims for a specific asset IRI
 
-Retrieve claims belonging to a specific credential:
+Retrieve all claims belonging to a specific asset, identified by its IRI.
+Works for both Verifiable Credentials and non-credential RDF assets:
 
 [source,sparql]
 ----
 PREFIX cred: <https://www.w3.org/2018/credentials#>
 SELECT ?s ?p ?o
 WHERE {
-  << ?s ?p ?o >> cred:credentialSubject <http://example.org/my-credential-subject>
+  <<(?s ?p ?o)>> cred:credentialSubject <http://example.org/my-asset-iri>
 }
 ----
