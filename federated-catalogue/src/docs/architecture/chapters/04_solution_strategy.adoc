@@ -103,10 +103,6 @@ Key concepts:
 * All RDF assets contain triples, and **claims are synonymous with triples** in this context.
 * Even non-credential RDF assets contain claims; they are simply unverified.
 
-==== Claim Class Naming Strategy
-
-The Java class representing an extracted claim follows a phased naming convention: `SdClaim` (legacy) → `CredentialClaim` (current, CAT-NFR-01) → `RdfClaim` (future, CAT-FR-GD-02). See <<section-design-decisions, ADR 6>> for the full rationale and naming evolution table.
-
 === Schema
 
 ==== Schema Types

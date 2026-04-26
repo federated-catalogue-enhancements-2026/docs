@@ -77,7 +77,11 @@ The Graph Database can be considered as a kind of search index. The single sourc
 
 . **Scalability**: Querying the Graph database might be the most critical part regarding performance. Therefore, the Graph Database can be replicated in the future by multiple, independent instances. Since there are no strict consistency requirements, changes in the Graph can be applied independently. In the control flow, all write operations on assets pass the Metadata Store. Therefore, the consistency can be enforced by that database.
 
-Generically returning the credential files containing claims that influence query response is not possible. To get the relevant credential files, the query to the Graph Database can be formulated to return the trust framework entity that is the __credentialSubject__ of a Verifiable Credential. Then this can be used as a filter for the assets endpoint, to download the credential file.
+Generically returning the asset files containing claims that influence query response is not possible.
+To get the relevant assets, the query to the Graph Database can be formulated to return the subject IRI of the claims.
+For Verifiable Credentials, this is the `credentialSubject` IRI.
+For non-credential RDF assets, this is the IRI extracted from the RDF content (e.g., `@id`).
+The returned IRI can then be used as a filter for the assets endpoint to download the originating asset file.
 
 The graph database backend is **pluggable**. The implementation is selected via the `graphstore.impl` configuration property:
 
@@ -108,7 +112,10 @@ We chose not to implement a workaround that involves query rewriting, as this ma
 
 ===== Fuseki backend
 
-The Fuseki backend uses Apache Jena with RDF-star. Claims are stored as RDF-star triple nodes: `<< subject predicate object >> cred:credentialSubject credentialSubjectUri`. Queries must use SPARQL-star syntax. Results are shuffled unless the query contains an `ORDER BY` clause.
+The Fuseki backend uses Apache Jena with RDF-star.
+Claims are stored as RDF-star triple nodes: `<<( subject predicate object )>> cred:credentialSubject credentialSubjectUri`.
+Queries must use SPARQL-star syntax (RDF 1.2 `<<( )>>` syntax, as supported by Jena 5.5+).
+Results are shuffled unless the query contains an `ORDER BY` clause.
 
 ==== File Store
 The File Store is responsible to persist all file based content submitted to the catalogue. These are credentials (Verifiable Presentations or standalone Verifiable Credentials), Schemas, and non-RDF assets.
@@ -136,11 +143,12 @@ The catalogue implementation is structured into two main components _fc-service-
 | Authorization | Handling the authorization, and user management in combination with the _Service_ and _Authentication_ component.
 | Authentication | This component stores the users and participant metadata.
 | Verification
-a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
+a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Also handles non-credential RDF assets. Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
 
 * **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
 * **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `VerificationStrategy` implementation (currently `CredentialVerificationStrategy`).
-* **Format detection:** `FormatDetector` classifies incoming credentials into two verification paths: Loire (JWT per ICAM v24.07) or generic VC 2.0. Credentials without a VC 2.0 context URI are rejected as `UNKNOWN`. See <<_format_detection>>.
+* **Format detection:** `FormatDetector` classifies incoming RDF content. Recognized credential formats (Loire JWT, VC 2.0) enter the credential verification pipeline. Content classified as `UNKNOWN` (no recognized credential format) is routed to the non-credential RDF extraction path — all triples are extracted via `JenaAllTriplesExtractor`. See <<_format_detection>>.
+* **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `JenaAllTriplesExtractor` extracts all triples using Apache Jena. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted `RdfClaim` instances. See <<_non_credential_rdf_extraction>>.
 * **JWT content preprocessing:** `JwtContentPreprocessor` detects JWT-wrapped credentials using a two-signal approach (Content-Type header as primary signal, body prefix as fallback) and unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_jwt_content_preprocessing>>.
 * **JWT signature verification:** `JwtSignatureVerifier` verifies compact JWT signatures by resolving the issuer's DID document, matching `kid` to an `assertionMethod` verification method, and cryptographically verifying the JWS. Also verifies inner VC JWTs from `EnvelopedVerifiableCredential` entries in VP JWTs. See <<_jwt_signature_verification>>.
 * **Loire JWT parsing:** `LoireJwtParser` decodes Loire-format JWTs where the credential is the top-level JWT payload (no `vc`/`vp` claim wrapper), conforming to ICAM v24.07. See <<_loire_jwt_parsing>>.
@@ -255,7 +263,7 @@ classDiagram
         +verifyResourceCredential(payload) CredentialVerificationResultResource
         +verifyCredential(payload) CredentialVerificationResult
         +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) CredentialVerificationResult
-        +extractClaims(payload) List~CredentialClaim~
+        +extractClaims(payload) List~RdfClaim~
         +verifyCredentialAgainstSchema(payload, schema) SchemaValidationResult
         +verifyCredentialAgainstCompositeSchema(payload) SchemaValidationResult
     }
@@ -282,14 +290,15 @@ classDiagram
     class VerificationStrategy {
         <<interface>>
         +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
-        +extractClaims(payload) List~CredentialClaim~
+        +extractClaims(payload) List~RdfClaim~
         +setBaseClassUri(baseClass, uri) void
     }
     class CredentialVerificationStrategy {
         -filter: ProtectedNamespaceFilter
         -jwtSignatureVerifier: JwtSignatureVerifier
         -formatDetector: FormatDetector
-        +extractClaims(payload) List~CredentialClaim~
+        -claimExtractionService: ClaimExtractionService
+        +extractClaims(payload) List~RdfClaim~
         +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
     }
     class FormatDetector {
@@ -307,6 +316,20 @@ classDiagram
     class LoireJwtParser {
         +parse(compactJwt) JsonLDObject
     }
+    class JenaAllTriplesExtractor {
+        +extractAllTriples(payload) List~RdfClaim~
+    }
+    class CredentialVerificationResult {
+        +id: String
+        +claims: List~RdfClaim~
+        +validators: List~Validator~
+    }
+    class NonCredentialVerificationResult {
+        +id: String
+        +claims: List~RdfClaim~
+        +issuer: null
+        +issuanceDate: null
+    }
     VerificationServiceImpl --> VerificationStrategy : delegates to
     VerificationStrategy <|.. CredentialVerificationStrategy
     CredentialVerificationStrategy --> ProtectedNamespaceFilter : filters via
@@ -314,11 +337,18 @@ classDiagram
     CredentialVerificationStrategy --> JwtSignatureVerifier : verifies JWT signatures
     CredentialVerificationStrategy --> JwtContentPreprocessor : detects + unwraps JWT
     CredentialVerificationStrategy --> LoireJwtParser : parses Loire JWT payload
+    CredentialVerificationStrategy --> JenaAllTriplesExtractor : extracts all triples\n(UNKNOWN format)
+    CredentialVerificationResult <|-- NonCredentialVerificationResult
 ....
 
-`VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety. The `resolveStrategy(ContentAccessor)` method currently always resolves to `CredentialVerificationStrategy`.
+`VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety.
+The `resolveStrategy(ContentAccessor)` method always resolves to `CredentialVerificationStrategy`, which internally routes between credential verification and non-credential RDF extraction based on `FormatDetector` output.
 
-`CredentialVerificationStrategy` implements all verification and claim extraction logic. In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the `CredentialVerificationResult`. The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+`CredentialVerificationStrategy` implements all verification and claim extraction logic.
+When `FormatDetector` returns a recognized credential format (`GAIAX_V2_LOIRE` or `VC2_DANUBETECH`), the full credential verification pipeline runs.
+When it returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` to extract all triples from the raw RDF content — returning a `NonCredentialVerificationResult`.
+In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
+The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
 
 [[_protected_namespace_filter]]
 ===== Protected Namespace Filter
@@ -353,7 +383,7 @@ classDiagram
         +filterModel(model, source) FilteredModel
     }
     class FilteredClaims {
-        +claims() List~CredentialClaim~
+        +claims() List~RdfClaim~
         +warning() String
         +hasWarning() boolean
     }
@@ -438,17 +468,40 @@ This component is used by the _Verification Service_ to extract Claims from cred
 
 Claims pass through the `ProtectedNamespaceFilter` before being returned (see <<_protected_namespace_filter>>). Triples referencing the internal `fcmeta:` namespace are removed at this stage, so the graph store never receives externally injected internal metadata. If any triples are filtered, a user-visible warning is included in the API response.
 
+[[_non_credential_rdf_extraction]]
+===== Non-Credential RDF Extraction
+
+For RDF assets that are not verifiable credentials , `CredentialVerificationStrategy` short-circuits the credential verification pipeline when `FormatDetector` returns `UNKNOWN` and delegates to `JenaAllTriplesExtractor` instead.
+
+`JenaAllTriplesExtractor` uses Apache Jena to parse the raw RDF content and extract all triples.
+It tries each RDF serialization in order until one succeeds: JSON-LD → Turtle → N-Triples → RDF/XML.
+All extracted triples are returned as `List<RdfClaim>`.
+Blank nodes are handled via Jena's built-in blank node representation.
+
+The extraction returns a `NonCredentialVerificationResult` — a subclass of `CredentialVerificationResult` with `issuer`, `issuanceDate`, and `credentialId` set to `null` (absent from non-credential RDF documents).
+The `claims` field contains all extracted `RdfClaim` instances, which pass through `ProtectedNamespaceFilter` before being stored in the graph.
+
+NOTE: SHACL schema validation is not invoked during upload for non-credential RDF assets, even when `federated-catalogue.verification.schema=true`.
+The `UNKNOWN` format path returns before reaching `validateSchema()`.
+This flag only affects credential uploads.
+On-demand validation against specific SHACL shapes is available via the `POST /assets/{id}/validate` endpoint (CAT-FR-CO-05).
+
+NOTE: Whether an RDF document enters this path depends on MIME type classification by `RdfDetector` (see <<_non_rdf_asset_upload>>) and the `FormatDetector` outcome.
+A Turtle or RDF/XML document without a Gaia-X credential structure classified as `UNKNOWN` by `FormatDetector` triggers this path.
+
 [[_format_detection]]
 ===== Format Detection
 
-The `FormatDetector` classifies incoming credentials into one of the following verification paths based on JWT header values (`typ`, `cty`) and payload structure. All credentials must include the W3C VC 2.0 context URI (`\https://www.w3.org/ns/credentials/v2`). Credentials using the VC 1.1 context (`\https://www.w3.org/2018/credentials/v1`) or Linked Data proofs are rejected as `UNKNOWN`.
+The `FormatDetector` classifies incoming RDF content into one of the following paths based on JWT header values (`typ`, `cty`) and payload structure.
+Content classified as `GAIAX_V2_LOIRE` or `VC2_DANUBETECH` enters the credential verification pipeline.
+Content classified as `UNKNOWN` (no recognized credential structure) is routed to the non-credential RDF extraction path (see <<_non_credential_rdf_extraction>>).
 
 [options="header",cols="1,2,3"]
 |===
 | Format | Label | Detection criteria
 | Loire JWT (ICAM v24.07 / W3C VC-JOSE-COSE) | `GAIAX_V2_LOIRE` | JWT envelope with recognized `typ`/`cty` headers (see table below)
 | Generic VC 2.0 (JSON-LD or JWT with `vc`/`vp` wrapper) | `VC2_DANUBETECH` | VC 2.0 context present; does not match Loire header criteria
-| Unrecognized | `UNKNOWN` | No VC 2.0 context, or VC 1.1 context, or Linked Data proof → rejected
+| Non-credential RDF | `UNKNOWN` | No recognized credential format — all triples extracted via `JenaAllTriplesExtractor`
 |===
 
 The detector accepts two families of JWT header values (see ADR 8):
@@ -575,7 +628,7 @@ public interface GraphStore {
      * @param claimList List of claims to be added to the Graph DB.
      * @param credentialSubject contains a credential unique identifier
      */
-    void addClaims(List<CredentialClaim> claimList, String credentialSubject);
+    void addClaims(List<RdfClaim> claimList, String credentialSubject);
 
     /**
      * Deletes all claims in the Graph DB of a given credential
@@ -1206,7 +1259,9 @@ The catalogue supports uploading non-RDF content (PDFs, plain JSON, YAML, images
 
 The `RdfDetector` component classifies uploaded content as RDF or non-RDF using two checks:
 
-1. **MIME type allowlist:** The content type is matched against a configurable set (`federated-catalogue.rdf.content-types`). By default, only `application/ld+json` is in the allowlist.
+1. **MIME type allowlist:** The content type is matched against a configurable set (`federated-catalogue.rdf.content-types`).
+The default allowlist includes both credential formats (JSON-LD, JWT) and non-credential RDF serializations (Turtle, N-Triples, RDF/XML).
+Non-credential RDF formats support claim extraction only — they do not enter the credential verification pipeline and SHACL schema validation is not invoked for them.
 2. **Content inspection (for `application/json` only):** A regex pattern checks whether `"@context"` appears as a JSON key with a plausible JSON-LD value (array, string, or URL). Plain JSON without `@context` is classified as non-RDF.
 
 ===== Asset Upload Service
@@ -1218,8 +1273,11 @@ The `AssetUploadService` orchestrates the dual-path upload flow. IRI assignment 
 flowchart TD
     Upload[POST /assets] --> Extract[Extract bytes + content type]
     Extract --> Detect{RdfDetector:\nis RDF?}
-    Detect -->|Yes| Verify[Verification Pipeline]
-    Verify --> IriRdf[IriGenerator:\nextract IRI from content]
+    Detect -->|Yes| Format{FormatDetector:\ncredential format?}
+    Format -->|GAIAX_V2_LOIRE\nor VC2_DANUBETECH| VerifyCred[Credential Verification Pipeline\nsemantic + schema + signature]
+    Format -->|UNKNOWN| ExtractAll[JenaAllTriplesExtractor:\nextract all triples]
+    VerifyCred --> IriRdf[IriGenerator:\nextract IRI from content]
+    ExtractAll --> IriRdf
     IriRdf --> StoreCred[storeCredential\nmetadata + claims + graph]
     Detect -->|No| IriNon[IriGenerator:\ngenerate UUID URN]
     IriNon --> StoreAsset[storeUnverified\nmetadata + FileStore only]
@@ -1265,7 +1323,7 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 [options="header",cols="2,1,3"]
 |===
 | Property | Default | Description
-| `federated-catalogue.rdf.content-types` | `[application/ld+json]` | MIME types treated as RDF (triggers verification pipeline)
+| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only. SHACL schema validation is not invoked at upload — even when `federated-catalogue.verification.schema=true` — because the `UNKNOWN` format path bypasses the validation step. On-demand validation is available via `POST /assets/{id}/validate` (CAT-FR-CO-05).
 | `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
 |===
 
@@ -1386,7 +1444,7 @@ public class CredentialVerificationResult extends VerificationResult {
   private String id;
 
   /** The claims extracted from the credential. */
-  private List<CredentialClaim> claims;
+  private List<RdfClaim> claims;
 
   /** The validators that signed the credential. */
   private List<Validator> validators;
@@ -1423,13 +1481,13 @@ If the credential is a Service Offering, the ID is stored in the `issuer` variab
 /**
  * POJO Class for holding a claim.
  */
-public class CredentialClaim {
+public class RdfClaim {
 
     private String subject;
     private String predicate;
     private String object;
 
-    public CredentialClaim(String subject, String predicate, String object) {
+    public RdfClaim(String subject, String predicate, String object) {
         this.subject = subject;
         this.predicate = predicate;
         this.object = object;
