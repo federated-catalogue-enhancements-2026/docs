@@ -799,7 +799,7 @@ sequenceDiagram
     API ->> API:Check[participant access — else 403]
     API ->> + ProvenanceService:add(assetId, version, rawVc, format)
     ProvenanceService ->> ProvenanceService:Parse VC, validate format and credentialSubject.id
-    ProvenanceService ->> ProvenanceService:Persist ProvenanceRecord (REQUIRES_NEW tx)
+    ProvenanceService ->> ProvenanceService:Persist ProvenanceRecord
     ProvenanceService -->> GraphDB:addClaims(PROV-O triple)
     ProvenanceService -->> - API:ProvenanceCredential
     API -->> - User:201 ProvenanceCredential
@@ -862,12 +862,12 @@ sequenceDiagram
     participant ProvenanceService
     participant VerificationService
     User ->> + API:POST /assets/{id}/provenance/{credentialId}/verify
-    API ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
     Auth -->> - API:OK
     API ->> + ProvenanceService:verifyOne(assetId, credentialId)
     ProvenanceService ->> + VerificationService:verify(rawVc)
     VerificationService -->> - ProvenanceService:VerificationResult (signature, DID, expiry)
-    ProvenanceService ->> ProvenanceService:Persist extended verificationResult (REQUIRES_NEW tx)
+    ProvenanceService ->> ProvenanceService:Persist extended verificationResult
     ProvenanceService -->> - API:ProvenanceVerificationResult
     API -->> - User:200 ProvenanceVerificationResult
 ....
@@ -887,7 +887,7 @@ sequenceDiagram
     participant ProvenanceService
     participant VerificationService
     User ->> + API:POST /assets/{id}/provenance/verify[?version=X]
-    API ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
     Auth -->> - API:OK
     API ->> + ProvenanceService:verifyAll(assetId, version)
     loop for each ProvenanceRecord
