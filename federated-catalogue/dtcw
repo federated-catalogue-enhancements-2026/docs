@@ -199,7 +199,7 @@ print_version_info() {
 }
 
 get_available_environments() {
-    # The local environment is alway available - even if docToolchain is not installed
+    # The local environment is always available - even if docToolchain is not installed
     local envs=" local"
 
     # 'sdk' is provided a bash founction - thus command doesn't work
