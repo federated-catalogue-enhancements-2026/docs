@@ -456,6 +456,21 @@ classDiagram
     }
 ....
 
+Validation results are persisted in the `validation_result` table (introduced by CAT-FR-CO-02, Liquibase changeset `015-validation-result-outdated.xml`).
+Results carry an `outdated` flag and an `OutdatedReason` that records why a result is no longer current:
+
+[options="header",cols="1,2"]
+|===
+| Reason | Trigger
+| `ASSET_UPDATED` | A new version of the asset was uploaded (`PUT /assets/{id}`)
+| `ASSET_REVOKED` | The asset was revoked (status transition to `REVOKED`)
+|===
+
+**Lifecycle rules (CAT-FR-LM-04):**
+
+* **Asset update / revoke:** All existing results for the asset are bulk-marked `outdated = true` with the appropriate `OutdatedReason`. Results are retained for audit purposes — historical validation state remains queryable.
+* **Asset delete:** All associated results are permanently deleted (`ValidationResultStore.deleteByAssetId`).
+
 ===== Revalidation Service
 
 This component periodically revalidates existing credentials. It checks if the signatures are still valid (e.g. not expired or referencing DID is still available). If the validation of a credential fails, it's either set to state _deprecated_ or _eol_. This will remove the credential from the Graph Database.
