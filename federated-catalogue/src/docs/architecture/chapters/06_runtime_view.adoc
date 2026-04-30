@@ -776,6 +776,130 @@ sequenceDiagram
 ....
 
 
+==== Attaching a Provenance Credential
+
+Stores a W3C VC 2.0 JSON-LD or VC-JWT provenance credential against a specific asset version. The optional `?version=X` query parameter targets a historical version (1-based ordinal); omitting it targets the current version. The write does **not** produce a new Envers revision on the asset.
+
+`credentialSubject.id` in the VC must equal `{assetId}:v{N}` — any mismatch returns 400. VC 1.1 payloads and payloads using the CAT-internal namespace are also rejected with 400. A duplicate `credentialId` (VC `id` field) returns 409.
+
+When a graph store is active, the corresponding PROV-O triple is written under the versioned asset IRI `{assetId}:v{N}` as a side-effect.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant ProvenanceService
+    participant GraphDB
+    User ->> + API:POST /assets/{id}/provenance[?version=X]
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> API:Check[participant access — else 403]
+    API ->> + ProvenanceService:add(assetId, version, rawVc, format)
+    ProvenanceService ->> ProvenanceService:Parse VC, validate format and credentialSubject.id
+    ProvenanceService ->> ProvenanceService:Persist ProvenanceRecord
+    ProvenanceService -->> GraphDB:addClaims(PROV-O triple)
+    ProvenanceService -->> - API:ProvenanceCredential
+    API -->> - User:201 ProvenanceCredential
+....
+
+
+==== Listing Provenance Credentials
+
+Returns a paginated list of provenance credentials for an asset, sorted by `issuedAt` descending. The optional `?version=X` parameter filters by a specific version ordinal; omitting it returns credentials across all versions. Supports standard `?page` and `?size` pagination parameters.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant ProvenanceService
+    User ->> + API:GET /assets/{id}/provenance[?version=X&page=0&size=20]
+    API ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> + ProvenanceService:list(assetId, version, pageable)
+    ProvenanceService -->> - API:ProvenanceCredentials (paginated)
+    API -->> - User:200 ProvenanceCredentials
+....
+
+
+==== Getting a Single Provenance Credential
+
+Returns the full provenance credential record including raw VC content for a given credential URI.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant ProvenanceService
+    User ->> + API:GET /assets/{id}/provenance/{credentialId}
+    API ->> + Auth:Authorize(ASSET_READ | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> + ProvenanceService:get(assetId, credentialId)
+    ProvenanceService -->> - API:ProvenanceCredential (with full VC content)
+    API -->> - User:200 ProvenanceCredential
+....
+
+
+==== Verifying a Single Provenance Credential
+
+Validates the signature and DID of a single provenance credential and persists the extended verification result. Subsequent reads reflect the updated `verified` flag and verification timestamp.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant ProvenanceService
+    participant VerificationService
+    User ->> + API:POST /assets/{id}/provenance/{credentialId}/verify
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> + ProvenanceService:verifyOne(assetId, credentialId)
+    ProvenanceService ->> + VerificationService:verify(rawVc)
+    VerificationService -->> - ProvenanceService:VerificationResult (signature, DID, expiry)
+    ProvenanceService ->> ProvenanceService:Persist extended verificationResult
+    ProvenanceService -->> - API:ProvenanceVerificationResult
+    API -->> - User:200 ProvenanceVerificationResult
+....
+
+
+==== Verifying All Provenance Credentials for an Asset
+
+Verifies all provenance credentials for an asset in sequence and returns an aggregated result. The optional `?version=X` parameter scopes the batch to a specific version. The aggregated `isValid` is `true` only when all credentials pass; per-credential results are included in `errors`.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant API
+    participant Auth as Authentication
+    participant ProvenanceService
+    participant VerificationService
+    User ->> + API:POST /assets/{id}/provenance/verify[?version=X]
+    API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - API:OK
+    API ->> + ProvenanceService:verifyAll(assetId, version)
+    loop for each ProvenanceRecord
+        ProvenanceService ->> + VerificationService:verify(rawVc)
+        VerificationService -->> - ProvenanceService:VerificationResult
+        ProvenanceService ->> ProvenanceService:Persist result, accumulate aggregate
+    end
+    ProvenanceService -->> - API:ProvenanceVerificationResult (aggregated)
+    API -->> - User:200 ProvenanceVerificationResult
+....
+
+
 ==== Get the current composite Schema
 
 [mermaid, width=2000]
