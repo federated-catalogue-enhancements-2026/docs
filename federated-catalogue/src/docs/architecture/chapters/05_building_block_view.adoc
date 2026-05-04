@@ -456,7 +456,7 @@ classDiagram
     }
 ....
 
-Validation results are persisted in the `validation_result` table (introduced by CAT-FR-CO-02, Liquibase changeset `015-validation-result-outdated.xml`).
+Validation results are persisted in the `validation_result` table.
 Results carry an `outdated` flag and an `OutdatedReason` that records why a result is no longer current:
 
 [options="header",cols="1,2"]
