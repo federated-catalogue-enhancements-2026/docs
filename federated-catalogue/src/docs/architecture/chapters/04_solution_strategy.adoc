@@ -83,7 +83,7 @@ classDiagram
     class Credential
     class NonCredential
     class Claim {
-        &lt;&lt;concept&gt;&gt;
+        <<concept>>
     }
 
     Asset <|-- RDFAsset

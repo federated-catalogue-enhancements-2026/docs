@@ -8,3 +8,6 @@
 
 // where are images located?
 :imagesdir: ../images
+
+// Mermaid CLI configuration
+:mmdc: mmdc

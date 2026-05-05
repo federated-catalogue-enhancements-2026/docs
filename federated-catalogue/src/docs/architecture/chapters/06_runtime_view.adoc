@@ -684,11 +684,11 @@ sequenceDiagram
     User ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
     Auth -->> - User:OK
     User ->> + API:PUT /assets/{id}[?changeComment=...]
-    API ->> API:Check[path id == credential body IRI — else 400]
+    API ->> API:Check[path id == credential body IRI - else 400]
     API ->> + VerificationService:verifyOfferingCredential(credential)
     VerificationService -->> - API:CredentialVerificationResult
     API ->> + AssetStore:storeCredential(AssetMetadata, CredentialVerificationResult)
-    Note right of AssetStore: In-place UPDATE — Envers records<br/>previous state in assets_aud
+    Note right of AssetStore: In-place UPDATE - Envers records previous state in assets_aud
     AssetStore -->> - API:OK
     API -->> - User:200 Asset
 ....
@@ -740,7 +740,7 @@ sequenceDiagram
     API ->> + AssetStore: getVersionHistoryPage(id, page, size)
     AssetStore -->> - API: PaginatedResults~AssetVersion~ (or 404)
     API ->> API:map to AssetVersionList {id, total, versions[]}
-    Note right of API: Each entry: version (1-based), createdAt,<br/>createdBy, status, isCurrent, changeComment
+    Note right of API: Each entry - version (1-based), createdAt, createdBy, status, isCurrent, changeComment
     API -->> - User:AssetVersionList
 ....
 
@@ -763,7 +763,7 @@ sequenceDiagram
     API ->> + AssetStore: getVersionCount(id)
     AssetStore -->> - API: totalVersions
     alt version < totalVersions
-        API -->> User: 409 Conflict (historical version — immutable)
+        API -->> User: 409 Conflict (historical version - immutable)
     else version == totalVersions (current)
         API ->> + AssetStore: getById(id)
         AssetStore -->> - API: AssetMetadata
@@ -796,7 +796,7 @@ sequenceDiagram
     User ->> + API:POST /assets/{id}/provenance[?version=X]
     API ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
     Auth -->> - API:OK
-    API ->> API:Check[participant access — else 403]
+    API ->> API:Check[participant access - else 403]
     API ->> + ProvenanceService:add(assetId, version, rawVc, format)
     ProvenanceService ->> ProvenanceService:Parse VC, validate format and credentialSubject.id
     ProvenanceService ->> ProvenanceService:Persist ProvenanceRecord
@@ -1015,18 +1015,18 @@ sequenceDiagram
     Auth -->> - User:OK
     User ->> + API:POST /schemas
     API ->> + SchemaStore:addSchema(schemaFile)
-    SchemaStore ->> SchemaStore:[Parse RDF — JSON-LD / RDF-XML / TTL]
+    SchemaStore ->> SchemaStore:[Parse RDF - JSON-LD / RDF-XML / TTL]
     SchemaStore ->> + Filter:filterModel(model, "schema import")
     Filter -->> - SchemaStore:FilteredModel {model, warning}
-    Note right of Filter: Triples using fcmeta: namespace<br/>are removed; warning captured
-    SchemaStore ->> SchemaStore:[Detect Schema Type — SHAPE / ONTOLOGY / VOCABULARY]
+    Note right of Filter: Triples using fcmeta namespace are removed, warning captured
+    SchemaStore ->> SchemaStore:[Detect Schema Type - SHAPE / ONTOLOGY / VOCABULARY]
     SchemaStore ->> SchemaStore:[Extract or Generate ID]
     SchemaStore ->> SchemaStore:[Extract defined URLs]
     SchemaStore ->> SchemaStore:[Check Duplicate URLs]
     SchemaStore ->> SchemaStore:[Store Schema in DB]
     SchemaStore -->> - API:SchemaStoreResult {id, warning}
     API ->> API:[Convert to SchemaResult {id, warnings}]
-    Note right of API: Server layer maps core result<br/>to generated API model
+    Note right of API: Server layer maps core result to generated API model
     API -->> - User:SchemaResult {id, warnings}
 ....
 
@@ -1047,7 +1047,7 @@ sequenceDiagram
     Auth -->> - User:OK
     User ->> + API:POST /schemas (Content-Type: application/schema+json or application/xml)
     API ->> API:[Detect non-RDF content type]
-    API ->> API:[Compute content hash → urn:schema:sha256:&lt;hash&gt;]
+    API ->> API:[Compute content hash → urn:schema:sha256:<hash>]
     API ->> + MetadataStore:Check for duplicate ID
     MetadataStore -->> - API:Not found
     API ->> + FileStore:Store raw file
@@ -1082,11 +1082,11 @@ sequenceDiagram
     API ->> + Auth:Authorize(SCHEMA_UPDATE | ADMIN_ALL)
     Auth -->> - API:OK
     API ->> + SchemaStore:updateSchema(ID, schema)
-    SchemaStore ->> SchemaStore:[Parse RDF — JSON-LD / RDF-XML / TTL]
+    SchemaStore ->> SchemaStore:[Parse RDF - JSON-LD / RDF-XML / TTL]
     SchemaStore ->> + Filter:filterModel(model, "schema import")
     Filter -->> - SchemaStore:FilteredModel {model, warning}
-    Note right of Filter: Triples using fcmeta: namespace<br/>are removed; warning captured
-    SchemaStore ->> SchemaStore:[Detect Schema Type — SHAPE / ONTOLOGY / VOCABULARY]
+    Note right of Filter: Triples using fcmeta namespace are removed, warning captured
+    SchemaStore ->> SchemaStore:[Detect Schema Type - SHAPE / ONTOLOGY / VOCABULARY]
     SchemaStore ->> SchemaStore:[Extract or Generate ID]
     SchemaStore ->> SchemaStore:[Verify ID matches existing schema ID]
     SchemaStore ->> SchemaStore:[Extract defined URLs]
@@ -1223,7 +1223,7 @@ sequenceDiagram
     end
     VerificationService ->> VerificationService:[Extract Claims]
     VerificationService ->> VerificationService:[Filter Protected Namespace (fcmeta:)]
-    Note right of VerificationService: Filtered triples produce<br/>warnings in CredentialVerificationResult
+    Note right of VerificationService: Filtered triples produce warnings in CredentialVerificationResult
     VerificationService -->> - API:CredentialVerificationResult (incl. warnings)
     API -->> -User: CredentialVerificationResult (incl. warnings)
 ....
@@ -1249,7 +1249,7 @@ sequenceDiagram
         MetaData -->> AssetStore:existing row or NULL
         alt existing row found (update)
             AssetStore ->> MetaData:updateInPlace(fields, changeComment)
-            Note right of MetaData: Envers records previous<br/>state in assets_aud
+            Note right of MetaData: Envers records previous state in assets_aud
             MetaData -->> AssetStore:OK
             AssetStore ->> GraphDB:deleteClaims(credentialSubject)
         else no existing row (first upload)
@@ -1347,7 +1347,7 @@ The flowchart below shows the steps within the verification sequence. Configurat
 [mermaid, width=2000]
 ....
 sequenceDiagram
-    VerificationService --> VerificationService:[Detect Format — Loire / VC 2.0 / reject]
+    VerificationService --> VerificationService:[Detect Format - Loire / VC 2.0 / reject]
     VerificationService --> VerificationService:[Unwrap JWT if present]
     VerificationService --> VerificationService:[Verify Syntax]
     VerificationService --> VerificationService:[Verify Semantic]
@@ -1385,17 +1385,17 @@ flowchart LR
         twoA([Validate against JSON-LD Grammar])
         twoA --> twoB(Validate against Verifiable Credential standard)
     end
-    subgraph three [Schema Validation — configurable]
+    subgraph three [Schema Validation - configurable]
         direction TB
         threeA{{Schema validation<br>enabled?}}
         threeA --> |yes| threeB([Extract Claims])
         threeB --> threeC(Check claims vs SHACL)
         threeA --> |no| threeD([Skip])
     end
-    subgraph four [Trust Verification — configurable]
+    subgraph four [Trust Verification - configurable]
         direction TB
         fourPre{{Signature verification<br>enabled?}}
-        fourPre --> |no| fourSkip([Skip — no cryptographic check])
+        fourPre --> |no| fourSkip([Skip - no cryptographic check])
         fourPre --> |yes| fourJWT(Verify JWT signature<br>via DID document + assertionMethod)
         fourJWT --> fourInner{VP JWT +<br>verifyVCSignatures?}
         fourInner --> |yes| fourEnv(Verify inner<br>EnvelopedVC JWTs)

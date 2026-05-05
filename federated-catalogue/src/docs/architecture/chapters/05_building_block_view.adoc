@@ -267,7 +267,7 @@ classDiagram
         +verifyCredentialAgainstSchema(payload, schema) SchemaValidationResult
         +verifyCredentialAgainstCompositeSchema(payload) SchemaValidationResult
     }
-    note for VerificationService "verifyCredentialAgainstSchema and\nverifyCredentialAgainstCompositeSchema\nare deprecated — use SchemaValidationService directly"
+    note for VerificationService "verifyCredentialAgainstSchema and\nverifyCredentialAgainstCompositeSchema\nare deprecated - use SchemaValidationService directly"
 ....
 
 [#_verification_strategy_pattern]
