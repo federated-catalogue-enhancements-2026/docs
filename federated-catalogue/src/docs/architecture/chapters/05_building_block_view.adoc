@@ -363,7 +363,7 @@ See ADR 10 for the full rationale.
 | File | Purpose
 | `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit role declarations
 | `ontology.ttl` | OWL class hierarchy used to derive each role's subclass closure (optional for non-SHACL bundles)
-| `shapes.ttl` | SHACL shapes loaded into the composite schema graph (optional for non-SHACL bundles)
+| `shapes.ttl` | SHACL shapes carried by the bundle. Currently NOT routed to the validation engine — the composite SHACL graph is still seeded from `defaultschema/shacl/` by `SchemaStoreImpl.initializeDefaultSchemas()`. Bundle-driven SHACL routing is a known follow-up (see ADR 10, Out of scope).
 |===
 
 `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
