@@ -466,7 +466,7 @@ Results carry an `outdated` flag and an `OutdatedReason` that records why a resu
 | `ASSET_REVOKED` | The asset was revoked (status transition to `REVOKED`)
 |===
 
-**Lifecycle rules (CAT-FR-LM-04):**
+**Lifecycle rules:**
 
 * **Asset update / revoke:** All existing results for the asset are bulk-marked `outdated = true` with the appropriate `OutdatedReason`. Results are retained for audit purposes — historical validation state remains queryable.
 * **Asset delete:** All associated results are permanently deleted (`ValidationResultStore.deleteByAssetId`).
