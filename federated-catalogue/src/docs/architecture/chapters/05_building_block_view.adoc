@@ -351,6 +351,103 @@ When it returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` t
 In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
 The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
 
+[[_trust_framework_bundles_and_role_resolution]]
+===== Trust Framework Bundles and Role Resolution
+
+A trust framework's identity, ontology, and SHACL shapes are packaged together as a **bundle** under `classpath:trustframeworks/<bundle-id>/`.
+The catalogue ships with the `gaia-x-2511` bundle and discovers any additional bundles dropped on the classpath at boot.
+See ADR 10 for the full rationale.
+
+[options="header",cols="1,3"]
+|===
+| File | Purpose
+| `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit role declarations
+| `ontology.ttl` | OWL class hierarchy used to derive each role's subclass closure (optional for non-SHACL bundles)
+| `shapes.ttl` | SHACL shapes loaded into the composite schema graph (optional for non-SHACL bundles)
+|===
+
+`TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
+Bundles that fail to load are logged at WARN and skipped — they do not abort the load of remaining bundles.
+
+`TrustFrameworkRegistryImpl` indexes the loaded bundles and exposes role resolution to the verification pipeline:
+
+[mermaid,width=1600]
+....
+classDiagram
+    class TrustFrameworkRegistry {
+        <<interface>>
+        +resolveRole(typeUri) ResolvedRole
+        +getBundles() Collection~TrustFrameworkBundle~
+        +getBundle(profileId) Optional~TrustFrameworkBundle~
+        +getEffectiveRoles(profileId) Set~String~
+        +isFrameworkEnabled(profileId) boolean
+    }
+    class TrustFrameworkRegistryImpl {
+        -typeIndex : Map~String, ResolvedRole~
+        -bundleIndex : Map~String, TrustFrameworkBundle~
+        -activeProfileIds : Set~String~
+    }
+    class TrustFrameworkBundle {
+        <<record>>
+        +config : FrameworkBundleConfig
+        +ontology : ContentAccessor
+        +shapes : ContentAccessor
+    }
+    class FrameworkBundleConfig {
+        <<record>>
+        +id : String
+        +family : String
+        +namespace : String
+        +validationType : ValidationType
+        +roles : Map~String, RoleConfig~
+    }
+    class RoleConfig {
+        <<record>>
+        +additionalRoots : List~String~
+        +types : List~String~
+    }
+    class ResolvedRole {
+        <<record>>
+        +frameworkProfileId : String
+        +role : String
+        +UNKNOWN$
+    }
+    class TrustFrameworkBundleLoader {
+        +loadFromClasspath() List~TrustFrameworkBundle~
+    }
+    TrustFrameworkRegistry <|.. TrustFrameworkRegistryImpl
+    TrustFrameworkRegistryImpl --> TrustFrameworkBundle : indexes
+    TrustFrameworkBundle --> FrameworkBundleConfig
+    FrameworkBundleConfig --> RoleConfig : roles
+    TrustFrameworkRegistryImpl --> ResolvedRole : returns
+    TrustFrameworkBundleLoader --> TrustFrameworkBundle : produces
+    CredentialVerificationStrategy --> TrustFrameworkRegistry : resolves credential subject roles
+....
+
+**Role indexing (SHACL bundles):** for each role declared in `framework.yaml`, the registry takes the root URI as `namespace + roleName`, then walks the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every subclass under that role.
+The `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.
+Bundles whose `validation_type` is not `shacl` are loaded but deferred (no validation engine wired yet); a WARN is logged and the bundle does not appear in `isFrameworkEnabled()`.
+
+**Resolution at verification time:** `CredentialVerificationStrategy` calls `registry.resolveRole(typeUri)` for each `credentialSubject` type encountered in a credential or VP.
+The result `(frameworkProfileId, role)` drives:
+
+* dispatch to the typed verification result (`Participant` / `ServiceOffering` / `Resource` for the bundled `gaia-x-2511` profile — see `VerificationConstants.ROLE_*`),
+* the typed-endpoint expected-role check (`/participants`, `/service-offerings`, `/resources` reject credentials whose subjects do not resolve to the matching role).
+
+A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the credential is treated as a non-typed RDF claim set and routed accordingly.
+
+**Bundled framework — `gaia-x-2511`:**
+
+[options="header",cols="1,3"]
+|===
+| Field | Value
+| `id` | `gaia-x-2511`
+| `family` | `gaia-x`
+| `namespace` | `https://w3id.org/gaia-x/2511#`
+| `validation_type` | `shacl`
+| Declared roles | `Participant`, `ServiceOffering` (with `additional_roots: [DigitalServiceOffering]`), `Resource`
+|===
+
 [[_protected_namespace_filter]]
 ===== Protected Namespace Filter
 

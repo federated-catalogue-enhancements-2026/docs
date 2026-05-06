@@ -328,3 +328,112 @@ If a future 2511 spec version introduces `owl:equivalentClass`, `owl:intersectio
 * Non-Gaia-X VC 2.0 (`VC2_DANUBETECH`) intentionally bypasses Gaia-X type resolution — future trust framework support for non-Gaia-X federations will add pluggable type resolution.
 * The SRS preamble envisions the catalogue as a generic, trust-framework-agnostic metadata store. Removing a single legacy trust framework generation aligns with this direction — the catalogue's verification pipeline is designed to be pluggable, not permanently coupled to any specific Gaia-X release.
 
+=== ADR 10: Trust Framework Bundles and Dynamic Role Resolution
+
+**Related:** ADR 8, ADR 9
+
+**Context:** ADR 9 introduced per-format type URI resolution to handle the disconnected Tagus/Loire class hierarchies.
+The type URIs (`gx:Participant`, `gx:ServiceOffering`, `gx:Resource`) were carried in `application.yml` properties and mapped to a compile-time `TrustFrameworkBaseClass` enum.
+This design has two operational failure modes and one structural limit:
+
+1. **Sibling classes in the same ontology.** The Loire 2511 ontology places `gx:DigitalServiceOffering` as a direct child of `gx:GaiaXEntity` — not under `gx:ServiceOffering`.
+SPARQL `rdfs:subClassOf*` traversal from `gx:ServiceOffering` never reaches it.
+Credentials of type `gx:DigitalServiceOffering` (which has its own `sh:targetClass` SHACL shape and is a valid first-class credential type) were rejected with "no proper CredentialSubject found." The same problem recurs for any future sibling class.
+
+2. **Cannot support multiple trust frameworks.** The catalogue is intended to be a generic federated catalogue (Gaia-X, future Catena-X, others).
+Hardcoded Gaia-X URIs and a fixed Java enum cannot accommodate this without code changes per framework.
+
+3. **Wrong abstraction level.** `TrustFrameworkBaseClass.SERVICE_OFFERING` was a Gaia-X concept baked into the type system, API routing, and storage.
+It cannot meaningfully represent the equivalent concept in another trust framework, nor future Gaia-X classes that are siblings rather than subclasses of `gx:ServiceOffering`.
+
+Three options were considered:
+
+1. **Add more hardcoded URIs:** Add `gx:DigitalServiceOffering` as a second `service-offering.type` URI.
+Fixes DSO immediately but deepens every structural problem above.
+
+2. **SHACL-driven discovery, retain enum:** Replace hardcoded URIs with runtime discovery; keep `TrustFrameworkBaseClass` enum as the routing label.
+Fixes DSO and enables new frameworks via config, but the fixed enum still couples the API and storage schema to Gaia-X concepts.
+
+3. **Bundle-per-framework with explicit role declarations (chosen):** Each trust framework is a self-contained classpath bundle (ontology + SHACL + a YAML config that declares the framework's roles).
+At startup the catalogue loads all bundles, builds a `<typeUri> → <ResolvedRole>` index by walking each declared role's subclass closure, and routes credentials by role string.
+No trust-framework concept exists in Java source — only in the bundle configs.
+
+**Decision:** Option 3 — bundle-per-framework with explicit role declarations and dynamic subclass-closure indexing.
+
+**Bundle layout (classpath resources):**
+
+----
+trustframeworks/
+  <bundle-id>/
+    framework.yaml      # bundle metadata and role declarations
+    ontology.ttl        # OWL class hierarchy (optional for non-SHACL bundles)
+    shapes.ttl          # SHACL shapes (optional for non-SHACL bundles)
+----
+
+The `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at boot.
+A bundle that fails to load is logged at WARN and skipped — it does not abort loading of remaining bundles.
+
+**`framework.yaml` format:**
+
+[source,yaml]
+----
+id: gaia-x-2511                          # framework profile id (registry key)
+family: gaia-x                           # framework family (groups related profiles)
+namespace: "https://w3id.org/gaia-x/2511#"
+validation_type: shacl                   # shacl | json-schema | unknown
+
+roles:
+  Participant:                           # role name = OWL local name; URI = namespace + roleName
+    additional_roots: [ ]                # extra URIs mapped to this role (non-OWL-subclass siblings)
+    types: [ ]                           # forward-compat for json-schema engines (unused for shacl)
+  ServiceOffering:
+    additional_roots:
+      - "https://w3id.org/gaia-x/2511#DigitalServiceOffering"
+    types: [ ]
+  Resource:
+    additional_roots: [ ]
+    types: [ ]
+
+properties: { }                          # framework-specific metadata (reserved)
+----
+
+**Role indexing (SHACL bundles):** For each declared role, the registry takes the root URI as `namespace + roleName`, then walks DOWN the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every reachable class under that role.
+The optional `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role — this is the mechanism that maps `gx:DigitalServiceOffering` to the `ServiceOffering` role.
+Bundles whose `validation_type` is not `shacl` are loaded but deferred (no validation engine wired yet); a WARN is logged.
+
+**`TrustFrameworkRegistry` (new bean, registered by `TrustFrameworkRegistryConfig`):**
+
+* `resolveRole(typeUri): ResolvedRole` — returns `(frameworkProfileId, role)` for a credential subject's type URI, or `ResolvedRole.UNKNOWN` if no bundle claims the type
+* `getBundles()` / `getBundle(profileId)` — bundle lookup
+* `getEffectiveRoles(profileId)` — role set declared by a bundle
+* `isFrameworkEnabled(profileId)` — true for SHACL-active bundles
+
+**`TrustFrameworkBaseClass` enum:** removed.
+Call sites use `ResolvedRole` (a record carrying `frameworkProfileId: String` and `role: String`).
+Storage and API routing dispatch on the role string directly.
+The role names `Participant`, `ServiceOffering`, and `Resource` remain referenced as constants (`VerificationConstants.ROLE_*`) by the typed verification endpoints, but the bundle config — not Java source — is the authority for what roles exist.
+
+**`CredentialFormat`:** the existing `GAIAX_V2_LOIRE` / `VC2_DANUBETECH` enum continues to drive format detection (JWT structure, header validation, unwrapping).
+It is independent of role resolution: any credential whose subject type URI is registered by some bundle resolves to that bundle's role, regardless of which JWT format envelope carries it.
+
+**Multi-framework side-by-side:** Multiple bundles load simultaneously.
+Namespaces are disjoint by construction; resolution is unambiguous.
+A VP containing credentials from different frameworks routes each credential through its own bundle's role.
+Adding a new framework is a classpath-resource change — drop a new `trustframeworks/<bundle-id>/` directory containing `framework.yaml` plus the ontology/SHACL files; no Java changes.
+
+**Removed configuration:** the `federated-catalogue.verification.{participant,resource,service-offering}.type` properties (and the `service-offering.additional-types` workaround) are no longer read.
+Type URIs are now declared exclusively in each bundle's `framework.yaml`.
+
+**Out of scope for this ADR:**
+
+* JSON Schema validation engine wiring (bundles with `validation_type: json-schema` load but defer until the engine is integrated)
+* A second framework bundle delivered alongside the catalogue — the mechanism exists; only the `gaia-x-2511` bundle ships at present
+* A generic type-URI-based query API — the existing role-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different role names can expose them via framework-specific endpoints or a generic type query
+
+**Rationale:**
+
+* Fully bundled framework definitions make adding `gx:DigitalServiceOffering` (or any future sibling) a one-line change in `framework.yaml` — no Java, no redeploy logic.
+* Removing the enum eliminates the architectural coupling between Gaia-X ontology structure and Java source; the verification pipeline is now a generic engine driven by bundle metadata.
+* Bundle-per-framework gives a clear extension point — a developer adding a new framework drops a directory; the registry treats it identically to the bundled one.
+* Explicit role declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three role names, not the full transitive subclass closure.
+* Supersedes the hardcoded `loireBaseClassUris` / `legacyBaseClassUris` maps and `service-offering.type` / `participant.type` / `resource.type` properties introduced in ADR 9.

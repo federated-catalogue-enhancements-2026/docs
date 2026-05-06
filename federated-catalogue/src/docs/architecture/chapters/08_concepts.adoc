@@ -31,6 +31,12 @@ The components use ```Slf4j``` for logging. ```Logback``` will be used as implem
 
 As default, all components should log to Standard out. Log aggregation is realized by the surrounding environment
 
+=== Trust Framework Bundles
+
+Each supported trust framework is delivered as a self-contained classpath bundle (`framework.yaml` + ontology + SHACL shapes) under `trustframeworks/<bundle-id>/`.
+A `TrustFrameworkRegistry` bean indexes all bundles at boot and resolves credential subject types to bundle-defined roles, replacing the previous hardcoded URI-to-enum mapping.
+See ADR 10 for the design rationale and <<_trust_framework_bundles_and_role_resolution,Building Block View — Trust Framework Bundles and Role Resolution>> for the runtime structure.
+
 === Admin Configuration Persistence
 
 Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` table holds structured trust framework definitions (columns: `id`, `name`, `service_url`, `api_version`, `timeout_seconds`, `enabled`, `created_at`, `updated_at`), seeded with a single Gaia-X entry. The `admin_config` table is a generic key-value store (`config_key` PK, `config_value`) for all other runtime settings:
