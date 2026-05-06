@@ -9,24 +9,71 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Check out code
         uses: actions/checkout@v5
         with:
           lfs: true
-      
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Verify Chrome is installed
+        run: |
+          which google-chrome || which google-chrome-stable || echo "Chrome not found"
+          google-chrome --version || google-chrome-stable --version || echo "Cannot run Chrome"
+
+      - name: Install Mermaid CLI
+        run: npm install -g @mermaid-js/mermaid-cli
+
+      - name: Verify Mermaid CLI installation and create symlink
+        run: |
+          which mmdc
+          mmdc --version
+          echo "PATH=$PATH"
+          sudo ln -sf $(which mmdc) /usr/local/bin/mmdc
+          which mmdc
+          ls -la /usr/local/bin/mmdc
+
+      - name: Test mmdc with simple diagram
+        run: |
+          echo 'graph TD; A-->B;' > test.mmd
+          CHROME_PATH=$(which google-chrome-stable || which google-chrome)
+          echo "Using Chrome at: $CHROME_PATH"
+          PUPPETEER_EXECUTABLE_PATH="$CHROME_PATH" mmdc -i test.mmd -o test.png || echo "mmdc test failed"
+          ls -la test.* || true
+
+      - name: Install docToolchain locally
+        run: |
+          cd ./federated-catalogue
+          ./dtcw local install doctoolchain
+
       - name: Generate HTML Documentation
         run: |
           cd ./federated-catalogue
-          ./dtcw generateHTML
-      
+          export CHROME_PATH=$(which google-chrome-stable || which google-chrome)
+          echo "Using Chrome at: $CHROME_PATH"
+          PUPPETEER_EXECUTABLE_PATH="$CHROME_PATH" ./dtcw local generateHTML
+
       - name: Generate PDF Documentation
         run: |
           cd ./federated-catalogue
-          ./dtcw generatePDF
+          export CHROME_PATH=$(which google-chrome-stable || which google-chrome)
+          echo "Using Chrome at: $CHROME_PATH"
+          PUPPETEER_EXECUTABLE_PATH="$CHROME_PATH" ./dtcw local generatePDF
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Documentation
           path: |
