@@ -427,8 +427,6 @@ Type URIs are now declared exclusively in each bundle's `framework.yaml`.
 **Out of scope for this ADR:**
 
 * JSON Schema validation engine wiring (bundles with `validation_type: json-schema` load but defer until the engine is integrated)
-* Bundle-driven SHACL routing for the validation pipeline — `TrustFrameworkBundle.shapes` is loaded into memory but currently unused; the composite SHACL graph used at verification time is still seeded from `classpath:defaultschema/shacl/` by `SchemaStoreImpl.initializeDefaultSchemas()` on first boot.
-Unifying the seed path so each bundle's `shapes.ttl` is the single source of truth for that framework's shapes (and dropping the `defaultschema/` mechanism, or relegating it to a fallback) is a deferred follow-up.
 * A second framework bundle delivered alongside the catalogue — the mechanism exists; only the `gaia-x-2511` bundle ships at present
 * A generic type-URI-based query API — the existing role-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different role names can expose them via framework-specific endpoints or a generic type query
 
