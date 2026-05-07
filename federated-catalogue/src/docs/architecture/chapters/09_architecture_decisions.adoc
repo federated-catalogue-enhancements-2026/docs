@@ -386,13 +386,16 @@ roles:
   Participant:                           # role name = OWL local name; URI = namespace + roleName
     additional_roots: [ ]                # extra URIs mapped to this role (non-OWL-subclass siblings)
     types: [ ]                           # forward-compat for json-schema engines (unused for shacl)
+    result_type: Participant             # stable dispatch key for result materialization (optional)
   ServiceOffering:
     additional_roots:
       - "https://w3id.org/gaia-x/2511#DigitalServiceOffering"
     types: [ ]
+    result_type: ServiceOffering
   Resource:
     additional_roots: [ ]
     types: [ ]
+    result_type: Resource
 
 properties: { }                          # framework-specific metadata (reserved)
 ----
@@ -407,6 +410,7 @@ Bundles whose `validation_type` is not `shacl` are loaded but deferred (no valid
 * `getBundles()` / `getBundle(profileId)` — bundle lookup
 * `getEffectiveRoles(profileId)` — role set declared by a bundle
 * `isFrameworkEnabled(profileId)` — true for SHACL-active bundles
+* `getResultType(profileId, role): Optional<String>` — returns the `result_type` identifier declared for the given role, or empty if absent (see Role-to-Result-Type Mapping below)
 
 **`TrustFrameworkBaseClass` enum:** removed.
 Call sites use `ResolvedRole` (a record carrying `frameworkProfileId: String` and `role: String`).
@@ -423,6 +427,20 @@ Adding a new framework is a classpath-resource change — drop a new `trustframe
 
 **Removed configuration:** the `federated-catalogue.verification.{participant,resource,service-offering}.type` properties (and the `service-offering.additional-types` workaround) are no longer read.
 Type URIs are now declared exclusively in each bundle's `framework.yaml`.
+
+**Role-to-Result-Type Mapping:**
+
+Each role entry in `framework.yaml` may carry an optional `result_type` field — a plain string identifier that names the result-materialization strategy to use when assembling a verification result for that role.
+An absent or empty `result_type` signals that the generic result schema is sufficient; no role-specific fields are populated.
+
+`TrustFrameworkRegistry.getResultType(profileId, role)` is the lookup API: it returns `Optional<String>` so callers can distinguish "bundle or role unknown" from "role declared but no result type set."
+
+The `result_type` value is intentionally a plain name, not a Java class FQN and not a prefixed IRI alias.
+Using an IRI (or a namespace prefix that expands to one) would couple the result-type to a specific ontology version URI — a new ontology namespace with the same conceptual role would require a value change, defeating the purpose of the field.
+Using the plain role name (e.g. `Participant`) as the `result_type` value is valid when role name and result schema are the same concept; bundles where they differ may declare a distinct string.
+
+This field prepares the dispatch layer — currently implemented as a hardcoded role-name switch in the result-assembly step — for bundle-driven control: once the generic result schema is the sole return type, `assembleResult` will derive its materialization behaviour from `getResultType` rather than from compile-time constants.
+Until then, the `result_type` values in `gaia-x-2511/framework.yaml` match the existing `VerificationConstants.ROLE_*` strings so that no semantic change is introduced.
 
 **Out of scope for this ADR:**
 
