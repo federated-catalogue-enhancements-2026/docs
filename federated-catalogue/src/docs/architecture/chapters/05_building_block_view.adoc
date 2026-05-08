@@ -369,7 +369,7 @@ See ADR 10 for the full rationale.
 `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
 Bundles that fail to load are logged at WARN and skipped — they do not abort the load of remaining bundles.
 
-`TrustFrameworkRegistryImpl` indexes the loaded bundles and exposes role resolution to the verification pipeline:
+`TrustFrameworkRegistry` indexes the loaded bundles and exposes role resolution to the verification pipeline:
 
 [mermaid,width=1600]
 ....
