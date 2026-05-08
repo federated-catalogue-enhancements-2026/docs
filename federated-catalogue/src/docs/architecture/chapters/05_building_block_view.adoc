@@ -291,8 +291,7 @@ classDiagram
     class VerificationStrategy {
         <<interface>>
         +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
-        +extractClaims(payload) List~RdfClaim~
-        +setBaseClassUri(baseClass, uri) void
+
     }
     class CredentialVerificationStrategy {
         -filter: ProtectedNamespaceFilter
