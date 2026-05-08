@@ -377,7 +377,7 @@ classDiagram
     class TrustFrameworkRegistry {
         <<interface>>
         +resolveRole(typeUri) ResolvedRole
-        +getBundles() Collection~TrustFrameworkBundle~
+        +getActiveBundles() Collection~TrustFrameworkBundle~
         +getBundle(profileId) Optional~TrustFrameworkBundle~
         +getEffectiveRoles(profileId) Set~String~
         +isFrameworkEnabled(profileId) boolean
