@@ -41,3 +41,27 @@ Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` t
 | `schema.module.{TYPE}.enabled` | Enable/disable individual schema validation modules (SHACL, JSON_SCHEMA, XML_SCHEMA, OWL)
 | `graphstore.preferred.backend` | Preferred graph database backend
 |===
+
+=== Asset Content Kinds and Metadata Enrichment
+
+Assets carry a `content_kind` field (values: `RDF`, `NON_RDF`) that records the original upload modality. The field is orthogonal to `AssetType` (`MACHINE_READABLE`, `HUMAN_READABLE`), which encodes the MR-HR linking status. Standalone assets (no MR-HR link) have `asset_type = NULL`.
+
+[options="header",cols="1,1,2"]
+|===
+| content_kind | AssetType | Meaning
+| `RDF` | _null_ | Standalone RDF asset (credential, ontology, shapes graph, …)
+| `RDF` | `MACHINE_READABLE` | RDF asset linked to a human-readable counterpart
+| `NON_RDF` | _null_ | Non-RDF binary/text asset (PDF, JSON, image, …); may be enriched
+| `NON_RDF` | `MACHINE_READABLE` | Non-RDF asset linked to a human-readable counterpart; may be enriched
+| `NON_RDF` | `HUMAN_READABLE` | Human-readable attachment; **cannot be enriched**
+|===
+
+**Metadata enrichment** is the process of attaching graph-queryable RDF triples to a non-RDF asset. An RDF payload is uploaded via `POST /assets` whose subject IRI matches an existing non-RDF asset. The service:
+
+. Parses the payload and requires at least one triple whose subject is the asset's IRI (otherwise HTTP 400).
+. Filters protected-namespace triples via `ProtectedNamespaceFilter`.
+. Replaces the asset's existing graph triples (`GraphStore.deleteClaims` → `addClaims`).
+. Persists the raw RDF payload to the `content` column (`AssetStore.saveEnrichedContent`), so the graph can be rebuilt from PostgreSQL at any time. The change is recorded in the Hibernate Envers audit trail with `changeComment = "Metadata enriched"`.
+. Returns HTTP 200; no new asset is created.
+
+`HUMAN_READABLE` assets reject enrichment with HTTP 422. If the graph backend is disabled (`graphstore.impl=none`), enrichment fails with HTTP 503 — graph writes are mandatory for this path. The `content_kind` is **not changed** by enrichment, and each enrichment upload replaces the previous metadata entirely (overwrite semantics — no merge).
