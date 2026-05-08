@@ -455,3 +455,6 @@ Until then, the `result_type` values in `gaia-x-2511/framework.yaml` match the e
 * Bundle-per-framework gives a clear extension point — a developer adding a new framework drops a directory; the registry treats it identically to the bundled one.
 * Explicit role declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three role names, not the full transitive subclass closure.
 * Supersedes the hardcoded `loireBaseClassUris` / `legacyBaseClassUris` maps and `service-offering.type` / `participant.type` / `resource.type` properties introduced in ADR 9.
+* The typed result POJOs `CredentialVerificationResultParticipant`, `CredentialVerificationResultOffering`, and `CredentialVerificationResultResource` were removed without an adapter or deprecation window.
+No known external Java consumers of these typed return values exist: the catalogue's public interface is its REST/OpenAPI endpoints and NATS events, not Java class types.
+An adapter phase would delay removal without providing safety to any known consumer.
