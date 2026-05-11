@@ -460,7 +460,7 @@ classDiagram
 [#_on_demand_asset_validation]
 ===== On-Demand Asset Validation Service
 
-`AssetValidationService` provides on-demand validation of stored assets against registered validators, invoked via `POST /assets/validate` (CAT-FR-CO-05). It supports RDF assets (JSON-LD, Turtle, N-Triples, RDF/XML, Loire JWT), plain JSON assets, and XML assets.
+`AssetValidationService` provides on-demand validation of stored assets against registered validators, invoked via `POST /assets/validate`. It supports RDF assets (JSON-LD, Turtle, N-Triples, RDF/XML, Loire JWT), plain JSON assets, and XML assets.
 
 Validation is delegated to a list of `ValidationStrategy` implementations selected by asset type:
 
@@ -523,7 +523,7 @@ The `claims` field contains all extracted `RdfClaim` instances, which pass throu
 NOTE: SHACL schema validation is not invoked during upload for non-credential RDF assets, even when `federated-catalogue.verification.schema=true`.
 The `UNKNOWN` format path returns before reaching `validateSchema()`.
 This flag only affects credential uploads.
-On-demand validation against specific SHACL shapes is available via the `POST /assets/validate` endpoint (CAT-FR-CO-05).
+On-demand validation against specific SHACL shapes is available via the `POST /assets/validate` endpoint.
 
 NOTE: Whether an RDF document enters this path depends on MIME type classification by `RdfDetector` (see <<_non_rdf_asset_upload>>) and the `FormatDetector` outcome.
 A Turtle or RDF/XML document without a Gaia-X credential structure classified as `UNKNOWN` by `FormatDetector` triggers this path.
@@ -1428,7 +1428,7 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 [options="header",cols="2,1,3"]
 |===
 | Property | Default | Description
-| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only. SHACL schema validation is not invoked at upload — even when `federated-catalogue.verification.schema=true` — because the `UNKNOWN` format path bypasses the validation step. On-demand validation is available via `POST /assets/validate` (CAT-FR-CO-05).
+| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only. SHACL schema validation is not invoked at upload — even when `federated-catalogue.verification.schema=true` — because the `UNKNOWN` format path bypasses the validation step. On-demand validation is available via `POST /assets/validate`.
 | `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
 |===
 
