@@ -172,7 +172,7 @@ NOTE: Non-RDF schemas (JSON Schema, XML Schema) bypass the Schema Store entirely
 | RDF Detector | Classifies uploaded content as RDF or non-RDF based on a configurable MIME type allowlist and content inspection. For `application/json`, the detector checks for a JSON-LD `@context` key to distinguish JSON-LD (RDF) from plain JSON (non-RDF). Note that `application/schema+json` (JSON Schema) and `application/xml` (XSD) are always classified as non-RDF — even though they are schema formats, they are not RDF and do not enter the RDF verification pipeline.
 | Asset Upload Service | Orchestrates the dual-path upload flow: extracts request data, delegates to `RdfDetector` for classification, then routes to either the verification pipeline (RDF) or direct asset storage (non-RDF).
 | Asset Link Service | Manages bidirectional links between machine-readable (RDF) assets and human-readable representations (e.g., PDF, DOCX). Link metadata is stored directly on the `assets` table via an `asset_type` column and a `linked_asset_id` FK; supplementary `fcmeta:hasHumanReadable` / `fcmeta:hasMachineReadable` RDF triples are written to the graph DB.
-| Validation Result Storage | Persists the outcome of on-demand credential validation. Each `ValidationResult` record is stored in PostgreSQL (`validation_result` table) and projected as `fcmeta:` triples in the graph store (`SYNCED`/`FAILED`). Retrieval is exposed via `GET /assets/{id}/validations` (paginated) and `GET /validations/{id}`. After a graph backend reset, `GraphRebuilder.rebuildValidationResults()` re-projects all records from PostgreSQL.
+| Validation Result Storage | Persists the outcome of on-demand asset validation. Each `ValidationResult` record is stored in PostgreSQL (`validation_result` table) and projected as `fcmeta:` triples in the graph store (`SYNCED`/`FAILED`). Retrieval is exposed via `GET /assets/{id}/validations` (paginated) and `GET /validations/{id}`. After a graph backend reset, `GraphRebuilder.rebuildValidationResults()` re-projects all records from PostgreSQL.
 | Metadata Store | Database keeping all the required metadata for the modules. The Metadata Store is _owned_ by the _Store_ components. For separation, each component gets its own set of tables with no relation between them.
 | File Store | Storage system for persisting files (e.g., file system or object store/DB). Separate instances exist for schemas/contexts and for non-RDF assets.
 |===
@@ -595,7 +595,7 @@ Automatic SHACL schema validation during asset upload is disabled by default. Th
 [#_schema_validation_service]
 ===== Schema Validation Service
 
-Automatic schema validation has been **disabled in the upload verification flow**. The Schema Validation Service was extracted from the `VerificationService` to provide on-demand SHACL schema validation of stored assets.
+Automatic schema validation in the upload verification flow is **configurable and disabled by default** (`federated-catalogue.verification.schema=false`). When enabled, upload verification delegates SHACL checks to `SchemaValidationService`; on-demand validation of stored assets is handled by `AssetValidationService` (see <<_on_demand_asset_validation>>).
 
 [mermaid, width=2000]
 ....
@@ -608,6 +608,29 @@ classDiagram
         +validateClaimsAgainstCompositeSchema(claims) SchemaValidationResult
     }
 ....
+
+[#_on_demand_asset_validation]
+===== On-Demand Asset Validation Service
+
+`AssetValidationService` provides on-demand validation of stored assets against registered validators, invoked via `POST /assets/validate`. It supports RDF assets (JSON-LD, Turtle, N-Triples, RDF/XML, Loire JWT), plain JSON assets, and XML assets.
+
+Validation is delegated to a list of `ValidationStrategy` implementations selected by asset type:
+
+[cols="2,2,1", options="header"]
+|===
+| Strategy | Applicable asset types | `validator_type`
+| `ShaclValidationStrategy` | JSON-LD, Turtle, N-Triples, RDF/XML, Loire JWT | `SHACL`
+| `JsonSchemaValidationStrategy` | JSON (non-RDF) | `JSON_SCHEMA`
+| `XmlSchemaValidationStrategy` | XML | `XML_SCHEMA`
+|===
+
+`ShaclValidationStrategy` delegates to `ShaclValidationExecutor` — the same SHACL evaluation engine used during the upload verification path. This ensures consistent SHACL results across both flows.
+
+RDF asset content is parsed by `RdfAssetParser`, which unwraps Loire JWTs before parsing and delegates format detection to `CredentialFormatDetector` (JSON-LD, Turtle, N-Triples, RDF/XML). Validation results are persisted via `ValidationResultStore` (see <<_validation_result_storage>>).
+
+Multi-asset requests (`assetIds` with more than one entry) are restricted to SHACL validation: all asset models are merged into a single data graph before evaluation. Single-asset requests dispatch to all applicable enabled strategies. The maximum number of assets per request is controlled by `federated-catalogue.validation.max-assets-per-request` (default: 20).
+
+`ShaclValidationExecutor` runs TopBraid SHACL in an isolated fixed-size thread pool and enforces a hard timeout. Both are configurable: `federated-catalogue.validation.shacl.timeout-seconds` (default: 10) and `federated-catalogue.validation.shacl.pool-size` (default: 4). Requests that exceed the timeout receive a `TimeoutException` (HTTP 504).
 
 Validation results are persisted in the `validation_result` table.
 Results carry an `outdated` flag and an `OutdatedReason` that records why a result is no longer current:
@@ -652,7 +675,7 @@ The `claims` field contains all extracted `RdfClaim` instances, which pass throu
 NOTE: SHACL schema validation is not invoked during upload for non-credential RDF assets, even when `federated-catalogue.verification.schema=true`.
 The `UNKNOWN` format path returns before reaching `validateSchema()`.
 This flag only affects credential uploads.
-On-demand validation against specific SHACL shapes is available via the `POST /assets/{id}/validate` endpoint (CAT-FR-CO-05).
+On-demand validation against specific SHACL shapes is available via the `POST /assets/validate` endpoint.
 
 NOTE: Whether an RDF document enters this path depends on MIME type classification by `RdfDetector` (see <<_non_rdf_asset_upload>>) and the `FormatDetector` outcome.
 A Turtle or RDF/XML document without a Gaia-X credential structure classified as `UNKNOWN` by `FormatDetector` triggers this path.
@@ -932,7 +955,7 @@ The `AssetStore` provides two parallel access paths: **hash-based** methods (int
 | `storeUnverified(metadata, filename)` | Store a non-RDF asset; IRI is pre-assigned by `IriGenerator`
 |===
 
-The `deleteAsset(hash)` and `changeLifeCycleStatus(hash, status)` methods are the deliberate exceptions — both remain hash-based to guarantee unambiguous single-row targeting. See ADR 7, Hash-Based Mutation Operations Exception.
+The `deleteAsset(hash)` and `changeLifeCycleStatus(hash, status)` methods are the deliberate exceptions — both remain hash-based to guarantee unambiguous single-row targeting. See ADR 7, Hash-Based Mutation Operations Exception. `deleteAsset` publishes an `AssetDeletedEvent` after the row deletion, triggering cascade cleanup of all associated validation results (see <<_validation_result_storage>>).
 
 The `IriGenerator` assigns IRIs before storage: it extracts IRIs from RDF content (`credentialSubject.id`, `@id`, ontology/shapes/vocabulary IRIs) or generates UUID URNs (RFC 4122) for non-RDF assets and as fallback. The `IriValidator` checks all assigned IRIs against supported formats (DIDs, UUID URNs, generic URNs, HTTP/HTTPS IRIs) — returning `true`/`false`. Callers decide how to handle invalid IRIs (fallback to UUID URN, or reject the request).
 
@@ -986,6 +1009,9 @@ classDiagram
         +store(record: ValidationResultRecord) Long
         +getByAssetId(assetId: String, pageable: Pageable) Page~ValidationResult~
         +getById(id: Long) Optional~ValidationResult~
+        +findAll(pageable: Pageable) Page~ValidationResult~
+        +syncToGraph(result: ValidationResult, graphStore: GraphStore) void
+        +deleteByAssetId(assetId: String) void
     }
     class ValidationResultGraphWriter {
         +write(result: ValidationResult, graphStore: GraphStore) void
@@ -1014,10 +1040,10 @@ classDiagram
 | BIGINT | id | PK | Surrogate key, sequence-generated (allocation size 50)
 | TEXT[] | asset_ids | | Asset subject IRI(s) — GIN indexed for efficient `= ANY()` lookups
 | TEXT[] | validator_ids | | Validator IDs (schema IRIs or trust framework IDs) used in this run
-| VARCHAR(64) | validator_type | | `SCHEMA` or `TRUST_FRAMEWORK`
+| VARCHAR(64) | validator_type | | `SHACL`, `JSON_SCHEMA`, `XML_SCHEMA`, or `TRUST_FRAMEWORK`
 | BOOLEAN | conforms | | True if validation passed; false if violations were found
 | TIMESTAMPTZ | validated_at | | Timestamp of the validation run (caller-supplied, not DB insertion time)
-| JSONB | report | | Serialised validation report; null for passing validations
+| TEXT | report | | Serialised validation report; null for passing validations
 | VARCHAR(64) | content_hash | | SHA-256 hex digest over canonical JSON of core fields — tamper detection
 | VARCHAR(16) | graph_sync_status | | `SYNCED` or `FAILED` — set atomically when the record is first stored
 | TIMESTAMPTZ | created_at | | DB insertion time, populated by Spring Data JPA `@CreatedDate`
@@ -1033,6 +1059,8 @@ The two REST endpoints for validation result retrieval are:
 |===
 
 After a graph backend reset, `GraphRebuilder.rebuildValidationResults()` re-projects all validation result records as `fcmeta:` triples from PostgreSQL, restoring graph state without re-running verification. Each record is updated to `SYNCED` on success or `FAILED` if the graph write fails.
+
+**Asset deletion cascade:** When an asset is deleted, `AssetStoreImpl` publishes an `AssetDeletedEvent`. `ValidationResultCleanupListener` handles this event at `BEFORE_COMMIT`, deleting all validation result rows that reference the asset from both the relational DB and the graph store. The cleanup runs inside the same transaction as the asset deletion — either both the asset row and its validation results are removed, or neither is. The `ValidationResultStore.deleteByAssetId()` method handles the graph triple removal best-effort: a failed graph cleanup is logged but does not abort the transaction.
 
 ==== Schema Management Store
 
@@ -1552,7 +1580,7 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 [options="header",cols="2,1,3"]
 |===
 | Property | Default | Description
-| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only. SHACL schema validation is not invoked at upload — even when `federated-catalogue.verification.schema=true` — because the `UNKNOWN` format path bypasses the validation step. On-demand validation is available via `POST /assets/{id}/validate` (CAT-FR-CO-05).
+| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only. SHACL schema validation is not invoked at upload — even when `federated-catalogue.verification.schema=true` — because the `UNKNOWN` format path bypasses the validation step. On-demand validation is available via `POST /assets/validate`.
 | `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
 |===
 
@@ -1642,16 +1670,17 @@ Five delegate services in `fc-service-server` implement the admin endpoints, eac
 | Service | Implements | Endpoints
 | `AdminDashboardService` | `AdminApiDelegate` | `GET /admin/me` (access check), `GET /admin/stats` (metrics), `GET /admin/health` (component health), `GET /admin/keycloak-url`
 | `TrustFrameworkAdminService` | `TrustFrameworkAdminApiDelegate` | List, toggle, and update trust frameworks; checks live connectivity per framework on list
-| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts. Only SHACL enforcement is active; JSON Schema, XML Schema, and OWL toggles persist to `admin_config` but are not yet wired to the verification pipeline (planned after CAT-FR-CO-05)
+| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService`; in upload verification, only SHACL is consulted. OWL toggles persist to `admin_config` but are not yet wired to any validation pipeline
 | `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
 |===
 
-One component in `fc-service-core` reads admin-controlled settings during normal catalogue operations:
+Two components in `fc-service-core` read admin-controlled settings during normal catalogue operations:
 
 [options="header",cols="1,1,2"]
 |===
 | Component | Triggered by | Effect of admin configuration
 | `LoireMatcher` | Format classification (per request) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether to attempt Loire classification at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
+| `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the corresponding validator path is skipped or rejected.
 | `CredentialVerificationStrategy` | Credential verification | Reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline. The Gaia-X enabled flag is consulted via `TrustFrameworkService` (see `LoireMatcher` above)
 |===
 

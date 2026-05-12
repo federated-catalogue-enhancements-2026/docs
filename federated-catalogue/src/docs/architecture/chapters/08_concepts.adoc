@@ -86,3 +86,17 @@ Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` t
 | `schema.module.{TYPE}.enabled` | Enable/disable individual schema validation modules (SHACL, JSON_SCHEMA, XML_SCHEMA, OWL)
 | `graphstore.preferred.backend` | Preferred graph database backend
 |===
+
+=== Input Parsing Security
+
+User-supplied content (assets, schemas, IRIs) is parsed only by hardened, sandboxed parsers. The catalogue treats every external byte sequence as untrusted, regardless of the caller's role. The same posture is applied uniformly across validators and graph stores.
+
+[options="header",cols="1,2,2"]
+|===
+| Threat | Mitigation | Component
+| XXE / external DTD | `FEATURE_SECURE_PROCESSING` enabled; `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to empty. | `XmlSchemaValidationStrategy`, XML parsers
+| SSRF via JSON `$ref` | `$ref` URI scheme allowlist: `https://` permitted; `file://`, `http://`, `ftp://`, `gopher://` rejected before schema load. | `JsonSchemaValidationStrategy`
+| SPARQL injection | IRIs validated by `requireSafeIri` before string-interpolation into SPARQL queries. | `SparqlGraphStore`
+|===
+
+Any new validator or store that accepts user-provided content must adopt the same posture. Hardening is enforced by tests: every new parser has at least one security-path test (malicious DTD, external `$ref`, unsafe IRI) alongside its happy-path tests.
