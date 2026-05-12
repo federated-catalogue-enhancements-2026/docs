@@ -175,8 +175,8 @@ sequenceDiagram
 
     User ->> + ParticipantController: POST /participants
     ParticipantController ->> + ParticipantsService: addParticipant (asset)
-    ParticipantsService ->> + VerificationService: verifyParticipantCredential(asset)
-    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
+    ParticipantsService ->> + VerificationService: verifyCredential(asset)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResult
     ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata assetMetadata, CredentialVerificationResult verificationResult)
     AssetStore -->> - ParticipantsService: [Ok, if no exception]
     ParticipantsService ->> + ParticipantDao: create(participant)
@@ -225,10 +225,10 @@ sequenceDiagram
     Keycloak -->> - ParticipantDao: group
     ParticipantDao ->> ParticipantDao: fromGroupRepo(group): Participant
     ParticipantDao -->> - ParticipantsService: Participant
-    ParticipantsService ->> + VerificationService: verifyParticipantCredential(credential)
-    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
+    ParticipantsService ->> + VerificationService: verifyCredential(credential)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResult
     ParticipantsService ->> ParticipantsService: checkUpdates(existing, updated)
-    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultParticipant)
+    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
     AssetStore -->> - ParticipantsService: ''
     ParticipantsService --> + ParticipantDao: update(Participant)
@@ -598,7 +598,7 @@ sequenceDiagram
     User ->> + Auth:Authorize(ASSET_CREATE | ADMIN_ALL)
     Auth -->> - User:[OK]
     User ->> + API:POST /assets
-    API ->> + VerificationService:verifyOfferingCredential(credential)
+    API ->> + VerificationService:verifyCredential(credential)
     VerificationService --> VerificationService:[Verify Syntax]
     VerificationService --> VerificationService:[Verify Semantic]
     VerificationService --> VerificationService:[Extract Credential Type]
@@ -615,7 +615,7 @@ sequenceDiagram
     alt credential.type != Participant
         API -->> User: [Error. Use Participant API]
     else credential.type == Offering
-        API ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultOffering)
+        API ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
         AssetStore -->> - API: [Ok, if no exception]
         API -->> - User:[Asset Meta]
@@ -685,7 +685,7 @@ sequenceDiagram
     Auth -->> - User:OK
     User ->> + API:PUT /assets/{id}[?changeComment=...]
     API ->> API:Check[path id == credential body IRI - else 400]
-    API ->> + VerificationService:verifyOfferingCredential(credential)
+    API ->> + VerificationService:verifyCredential(credential)
     VerificationService -->> - API:CredentialVerificationResult
     API ->> + AssetStore:storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: In-place UPDATE - Envers records previous state in assets_aud
@@ -1316,7 +1316,10 @@ Besides verifying the credential, additional tasks are executed (e.g., format de
 
 `VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full format detection, VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`. See <<_verification_strategy_pattern>> for details.
 
-**Format detection** is always active. The `FormatDetector` classifies the incoming credential as either Loire (JWT per ICAM v24.07) or generic VC 2.0. Credentials without a VC 2.0 context URI are rejected. For JWT credentials, the `JwtContentPreprocessor` unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_format_detection>>.
+**Format detection** is always active. `CredentialFormatDetector` iterates an ordered chain of `FormatMatcher` beans — `LoireMatcher` (`@Order(1)`, only active when the `gaia-x` family is enabled via `TrustFrameworkService`), `DanubeTechFormatMatcher` (`@Order(3)`) — and returns the first non-`UNKNOWN` classification.
+Credentials without a VC 2.0 context URI are rejected.
+For JWT credentials, the `JwtContentPreprocessor` unwraps the JWT envelope to produce JSON-LD for downstream processing.
+See <<_format_detection>>.
 
 **Syntactic validation** is always active. The credential is parsed as JSON-LD and validated against the Verifiable Credential data model. Any syntactic issue will raise an error here. For JWT credentials, parsing occurs after JWT unwrapping.
 
