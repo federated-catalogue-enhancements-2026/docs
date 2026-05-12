@@ -146,9 +146,9 @@ The catalogue implementation is structured into two main components _fc-service-
 a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Also handles non-credential RDF assets. Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
 
 * **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
-* **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `RdfIngestionStrategy` implementation (currently `CredentialVerificationStrategy`).
-* **Format detection:** `FormatDetector` classifies incoming RDF content. Recognized credential formats (Loire JWT, VC 2.0) enter the credential verification pipeline. Content classified as `UNKNOWN` (no recognized credential format) is routed to the non-credential RDF extraction path — all triples are extracted via `JenaAllTriplesExtractor`. See <<_format_detection>>.
-* **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `JenaAllTriplesExtractor` extracts all triples using Apache Jena. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted `RdfClaim` instances. See <<_non_credential_rdf_extraction>>.
+* **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to one of two `RdfIngestionStrategy` implementations — `CredentialVerificationStrategy` (recognised credentials and ambiguous JWTs) or `NonCredentialIngestionStrategy` (plain RDF payloads ingested as raw triples).
+* **Format detection:** `CredentialFormatDetector` classifies incoming RDF content by iterating an ordered chain of `CredentialFormatProcessor` beans. Recognized credential formats (Loire JWT, VC 2.0) enter the credential verification pipeline. Content classified as `UNKNOWN` (no recognized credential format) is routed to `NonCredentialIngestionStrategy`, which delegates triple extraction to `ClaimExtractionService.extractAllTriples()`. See <<_format_detection>>.
+* **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `NonCredentialIngestionStrategy` extracts all triples using Apache Jena via `ClaimExtractionService`. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted `RdfClaim` instances. See <<_non_credential_rdf_extraction>>.
 * **JWT content preprocessing:** `JwtContentPreprocessor` detects JWT-wrapped credentials using a two-signal approach (Content-Type header as primary signal, body prefix as fallback) and unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_jwt_content_preprocessing>>.
 * **JWT signature verification:** `JwtSignatureVerifier` verifies compact JWT signatures by resolving the issuer's DID document, matching `kid` to an `assertionMethod` verification method, and cryptographically verifying the JWS. Also verifies inner VC JWTs from `EnvelopedVerifiableCredential` entries in VP JWTs. See <<_jwt_signature_verification>>.
 * **Loire JWT parsing:** `LoireJwtParser` decodes Loire-format JWTs where the credential is the top-level JWT payload (no `vc`/`vp` claim wrapper), conforming to ICAM v24.07. See <<_loire_jwt_parsing>>.
@@ -271,13 +271,14 @@ Typed result subclasses (`CredentialVerificationResultParticipant`, `…Offering
 ===== Verification Strategy Pattern
 
 The `VerificationServiceImpl` follows the Strategy pattern.
-It acts as a thin Context that maintains per-request verification toggles (`verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature`) and delegates all verification and claim extraction logic to a `RdfIngestionStrategy` injected via Spring's `@Qualifier`.
+It acts as a thin Context that maintains per-request verification toggles (`verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature`) and delegates payload processing to one of two `RdfIngestionStrategy` implementations.
 
-The `resolveStrategy(ContentAccessor)` method selects the appropriate strategy for a given payload. Currently it always resolves to `CredentialVerificationStrategy`.
+The `resolveStrategy(ContentAccessor)` method picks the strategy per payload: JWT bodies always go to `CredentialVerificationStrategy` (which handles both recognised and ambiguous JWTs); JSON-LD / RDF bodies are pre-classified by `CredentialFormatDetector` and routed to `NonCredentialIngestionStrategy` when no credential format matches.
 
-Format classification is delegated to an **ordered chain of `FormatMatcher` beans** orchestrated by `CredentialFormatDetector`.
-Each matcher is a Spring `@Component` carrying an `@Order(n)` annotation; the detector iterates the chain and the first matcher that returns a non-`UNKNOWN` classification wins.
-Adding a new credential format is a matter of dropping in a new `FormatMatcher` bean — no edits to the strategy or detector itself.
+Per-credential-family dispatch (Loire vs. danubetech VC 2.0 etc.) is delegated to an **ordered chain of `CredentialFormatProcessor` beans** orchestrated by `CredentialFormatDetector`.
+Each processor is a Spring `@Component` carrying an `@Order(n)` annotation and owns the full lifecycle for one format family: matching (`match`), outer-envelope processing (`process` — JWT signature verification when applicable, plus any format-specific policy enforcement), and nested-payload unwrapping (`unwrapNested`).
+The detector iterates the chain and the first processor that returns a non-`UNKNOWN` classification wins.
+Adding a new credential format is a matter of dropping in a new `CredentialFormatProcessor` bean — no edits to the strategy or detector itself.
 
 [mermaid, width=2000]
 ....
@@ -287,54 +288,64 @@ classDiagram
         -verifySchema : boolean
         -verifyVPSignature : boolean
         -verifyVCSignature : boolean
-        +resolveStrategy(payload) VerificationStrategy
+        +resolveStrategy(payload) RdfIngestionStrategy
     }
-    class VerificationStrategy {
+    class RdfIngestionStrategy {
         <<interface>>
         +ingest(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
-        +extractClaims(payload) List~RdfClaim~
     }
     class CredentialVerificationStrategy {
-        -filter: ProtectedNamespaceFilter
-        -jwtSignatureVerifier: JwtSignatureVerifier
+        -protectedNamespaceFilter: ProtectedNamespaceFilter
         -formatDetector: CredentialFormatDetector
+        -formatProcessors: List~CredentialFormatProcessor~
+        -envelopedCredentialResolver: EnvelopedCredentialResolver
         -claimExtractionService: ClaimExtractionService
         -trustFrameworkRegistry: TrustFrameworkRegistry
-        +extractClaims(payload) List~RdfClaim~
+        +ingest(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
+    }
+    class NonCredentialIngestionStrategy {
+        -claimExtractionService: ClaimExtractionService
+        -protectedNamespaceFilter: ProtectedNamespaceFilter
         +ingest(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
     }
     class CredentialFormatDetector {
-        -matchers : List~FormatMatcher~
-        +detect(headers, payload) CredentialFormat
+        -processors : List~CredentialFormatProcessor~
+        +detect(payload) CredentialFormat
     }
-    class FormatMatcher {
+    class CredentialFormatProcessor {
         <<interface>>
-        +match(context) CredentialFormat
+        +getFormat() CredentialFormat
+        +match(ctx) Optional~CredentialFormat~
+        +process(body, payload, verifySigs) ProcessedEnvelope
+        +unwrapNested(payload) ContentAccessor
     }
-    class LoireMatcher {
-        +match(context) CredentialFormat
+    class LoireCredentialProcessor {
+        @Order(1)
+        +match(ctx) Optional~CredentialFormat~
+        +process(body, payload, verifySigs) ProcessedEnvelope
+        +unwrapNested(payload) ContentAccessor
     }
-    class DanubeTechFormatMatcher {
-        +match(context) CredentialFormat
+    class Vc2DanubeTechCredentialProcessor {
+        @Order(3)
+        +match(ctx) Optional~CredentialFormat~
+        +process(body, payload, verifySigs) ProcessedEnvelope
+        +unwrapNested(payload) ContentAccessor
+    }
+    class LoirePolicyEnforcer {
+        +enforceIfApplicable(compactJwt, jwtValidator) void
+    }
+    class EnvelopedCredentialResolver {
+        +extractEnvelopedJwt(body) String
+        +resolveInnerEnvelopedCredentials(payload) ContentAccessor
+        +verifyInnerVcCredentials(ld) List~Validator~
     }
     class TrustFrameworkService {
         +isEnabled(family) boolean
         +getConfig(family) Optional~TrustFrameworkConfig~
     }
-    class JwtContentPreprocessor {
-        +isJwtWrapped(contentType, body) boolean
-        +unwrap(body) JsonLDObject
-        +getContentType() String
-    }
     class JwtSignatureVerifier {
         -didResolver: DidDocumentResolver
         +verify(compactJwt) Validator
-    }
-    class LoireJwtParser {
-        +parse(compactJwt) JsonLDObject
-    }
-    class JenaAllTriplesExtractor {
-        +extractAllTriples(payload) List~RdfClaim~
     }
     class CredentialVerificationResult {
         +id: String
@@ -348,34 +359,42 @@ classDiagram
         +issuer: null
         +issuanceDate: null
     }
-    VerificationServiceImpl --> VerificationStrategy : delegates to
-    VerificationStrategy <|.. CredentialVerificationStrategy
+    VerificationServiceImpl --> RdfIngestionStrategy : delegates to
+    RdfIngestionStrategy <|.. CredentialVerificationStrategy
+    RdfIngestionStrategy <|.. NonCredentialIngestionStrategy
+    VerificationServiceImpl --> CredentialFormatDetector : pre-classifies\nnon-JWT bodies
     CredentialVerificationStrategy --> ProtectedNamespaceFilter : filters via
     CredentialVerificationStrategy --> CredentialFormatDetector : classifies format
-    CredentialFormatDetector --> FormatMatcher : iterates ordered chain
-    FormatMatcher <|.. LoireMatcher
-    FormatMatcher <|.. DanubeTechFormatMatcher
-    LoireMatcher --> TrustFrameworkService : isEnabled("gaia-x")
-    LoireMatcher --> TrustFrameworkRegistry : reads trust_anchor_url\nfrom bundle properties
-    CredentialVerificationStrategy --> JwtSignatureVerifier : verifies JWT signatures
-    CredentialVerificationStrategy --> JwtContentPreprocessor : detects + unwraps JWT
-    CredentialVerificationStrategy --> LoireJwtParser : parses Loire JWT payload
-    CredentialVerificationStrategy --> JenaAllTriplesExtractor : extracts all triples\n(UNKNOWN format)
+    CredentialVerificationStrategy --> CredentialFormatProcessor : dispatches by format
+    CredentialVerificationStrategy --> EnvelopedCredentialResolver : EVC/EVP unwrap +\ninner-VC verify
+    NonCredentialIngestionStrategy --> ProtectedNamespaceFilter : filters via
+    CredentialFormatDetector --> CredentialFormatProcessor : iterates ordered chain
+    CredentialFormatProcessor <|.. LoireCredentialProcessor
+    CredentialFormatProcessor <|.. Vc2DanubeTechCredentialProcessor
+    LoireCredentialProcessor --> LoirePolicyEnforcer : enforces did:web +\ntrust chain
+    LoireCredentialProcessor --> JwtSignatureVerifier : verifies JWT signature
+    Vc2DanubeTechCredentialProcessor --> JwtSignatureVerifier : verifies JWT signature\n(JWT bodies only)
+    LoirePolicyEnforcer --> TrustFrameworkService : isEnabled("gaia-x")
+    LoirePolicyEnforcer --> TrustFrameworkRegistry : reads trust_anchor_url\nfrom bundle properties
+    EnvelopedCredentialResolver --> JwtSignatureVerifier : verifies inner VC JWTs
     CredentialVerificationResult <|-- NonCredentialVerificationResult
 ....
 
-`VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety.
-The `resolveStrategy(ContentAccessor)` method always resolves to `CredentialVerificationStrategy`, which internally routes between credential verification and non-credential RDF extraction based on `CredentialFormatDetector` output.
+`VerificationServiceImpl` injects both strategy implementations through constructor injection (`@RequiredArgsConstructor`).
+`resolveStrategy(ContentAccessor)` returns `credentialStrategy` for any JWT body and for any JSON-LD body the format detector recognises as a credential; `nonCredentialStrategy` is returned only when the body is plain JSON-LD / RDF and the detector yields `UNKNOWN`.
+After the strategy returns, the service performs one last cross-cutting check: if the result is a credential and `role` is `null`, the credential type is unrecognised by every active trust-framework bundle and the request is rejected with a 400 listing the active bundles and their declared roles.
 
-`CredentialVerificationStrategy` implements all verification and claim extraction logic.
-When the matcher chain returns a recognized credential format (`GAIAX_V2_LOIRE` or `VC2_DANUBETECH`), the full credential verification pipeline runs.
-When the chain returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` to extract all triples from the raw RDF content — returning a `NonCredentialVerificationResult`.
-In `ingest()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
-The `RdfIngestionStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+`CredentialVerificationStrategy` implements the credential pipeline — format dispatch, JWT signature verification (delegated to the matching `CredentialFormatProcessor`), Loire policy enforcement (`LoirePolicyEnforcer`), EVC/EVP unwrap and inner-VC verification (`EnvelopedCredentialResolver`), JSON-LD unwrap, semantic and schema validation, claim extraction, and protected-namespace filtering.
+`NonCredentialIngestionStrategy` extracts every triple from a plain RDF body via `ClaimExtractionService.extractAllTriples`, applies the protected-namespace filter, and returns a `NonCredentialVerificationResult` — no semantic, schema, or signature verification (those concepts only apply to credentials).
+Both strategies apply `ProtectedNamespaceFilter.filterClaims()` before returning and propagate filter warnings to the result; the `RdfIngestionStrategy` interface Javadoc documents the namespace-filtering requirement (CAT-FR-GD-09) for all implementations.
 
-`LoireMatcher` (`@Order(1)`) is the first matcher in the chain.
-It only activates when the `gaia-x` trust-framework family is enabled in persistence — checked via `TrustFrameworkService.isEnabled("gaia-x")` — and reads the Trust Anchor Registry URL from the bundle's own `properties.trust_anchor_url`, rather than from application-level configuration.
-`DanubeTechFormatMatcher` (`@Order(3)`) handles VC 2.0 JSON-LD credentials and runs after `LoireMatcher` so that a JWT carrying a Loire `typ` header is not absorbed by the generic VC 2.0 path.
+`LoireCredentialProcessor` (`@Order(1)`) is the first processor in the chain.
+A credential is Loire if its JWT `typ` header is a Loire value (`vc+jwt`, `vc+ld+json+jwt`, `vp+jwt`, `vp+ld+jwt`) **and** the payload carries a top-level `@context` without a `vc`/`vp` wrapper claim; a contradictory payload (Loire `typ` plus a wrapper claim) is explicitly rejected as `UNKNOWN` so it cannot fall through to the generic VC 2.0 path.
+Loire-specific policies (issuer DID method restriction, `x5u` trust-chain validation) are delegated to `LoirePolicyEnforcer`, which itself consults `TrustFrameworkService.isEnabled("gaia-x")` and reads the Trust Anchor Registry URL from the bundle's `properties.trust_anchor_url` — the configuration travels with the bundle rather than living in `application.yml`.
+`Vc2DanubeTechCredentialProcessor` (`@Order(3)`) handles VC 2.0 — both JSON-LD bodies (matched by the VC 2.0 `@context`) and JWTs whose payload contains a `vc` or `vp` wrapper claim — and runs after the Loire processor so a JWT carrying a Loire `typ` header is not absorbed by the generic path.
+
+`EnvelopedCredentialResolver` owns all W3C VC 2.0 `EnvelopedVerifiableCredential` / `EnvelopedVerifiablePresentation` plumbing: detecting and unwrapping outer EVC/EVP wrappers, rewriting a VP's `verifiableCredential` array so inner EVC entries become inline JSON-LD VCs for downstream claim extraction, and verifying inner-VC signatures when the outer is a VP JWT.
+Format-specific JWT unwrapping is delegated back to the matching `CredentialFormatProcessor.unwrapNested()`; the resolver itself only handles the envelope mechanics.
 
 [[_trust_framework_bundles_and_role_resolution]]
 ===== Trust Framework Bundles and Role Resolution
@@ -390,7 +409,7 @@ See ADR 10 for the full rationale.
 | `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit role declarations
 | `ontology.ttl` | OWL class hierarchy used to derive each role's subclass closure (optional for non-SHACL bundles)
 | `shapes.ttl` | SHACL shapes loaded into the composite schema graph via the schema-store seed at boot. `SchemaStoreImpl.initializeDefaultSchemas()` seeds each SHACL bundle's `ontology.ttl` and `shapes.ttl` into the schema-store DB on first boot. The `defaultschema/` directory is retained as an operator-overlay fallback for custom schemas not associated with any bundle.
-| `properties:` block in `framework.yaml` | Framework-specific runtime values consumed by the bundle's own beans (e.g. `trust_anchor_url` read by `LoireMatcher`). Not interpreted by the registry.
+| `properties:` block in `framework.yaml` | Framework-specific runtime values consumed by the bundle's own beans (e.g. `trust_anchor_url` read by `LoirePolicyEnforcer`). Not interpreted by the registry.
 |===
 
 `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
@@ -458,7 +477,7 @@ classDiagram
     TrustFrameworkBundleLoader --> TrustFrameworkBundle : produces
     CredentialVerificationStrategy --> TrustFrameworkRegistry : resolves credential subject roles
     TrustFrameworkService --> TrustFrameworkRepository : reads/writes\nenabled flag
-    LoireMatcher --> TrustFrameworkService : isEnabled("gaia-x")
+    LoirePolicyEnforcer --> TrustFrameworkService : isEnabled("gaia-x")
 ....
 
 The bounded context exposes two beans with complementary responsibilities:
@@ -495,7 +514,7 @@ A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the cre
 | `namespace` | `https://w3id.org/gaia-x/2511#`
 | `validation_type` | `shacl`
 | Declared roles | `Participant`, `ServiceOffering` (with `additional_roots: [DigitalServiceOffering]`), `Resource`
-| `properties.trust_anchor_url` | URL of the Gaia-X Trust Anchor Registry consulted during Loire `x5u` trust-chain validation. Read at runtime by `LoireMatcher`.
+| `properties.trust_anchor_url` | URL of the Gaia-X Trust Anchor Registry consulted during Loire `x5u` trust-chain validation. Read at runtime by `LoirePolicyEnforcer`.
 |===
 
 **Bundle properties.**
@@ -663,19 +682,16 @@ Claims pass through the `ProtectedNamespaceFilter` before being returned (see <<
 [[_non_credential_rdf_extraction]]
 ===== Non-Credential RDF Extraction
 
-For RDF assets that are not verifiable credentials , `CredentialVerificationStrategy` short-circuits the credential verification pipeline when `FormatDetector` returns `UNKNOWN` and delegates to `JenaAllTriplesExtractor` instead.
+For RDF assets that are not verifiable credentials, `VerificationServiceImpl.resolveStrategy()` routes the payload to `NonCredentialIngestionStrategy` — a sibling `RdfIngestionStrategy` implementation alongside `CredentialVerificationStrategy`.
+Selection happens up-front: a JSON-LD / RDF body whose `CredentialFormatDetector` classification is `UNKNOWN` goes here; JWT bodies always remain on the credential path (the credential strategy rejects ambiguous JWTs explicitly).
 
-`JenaAllTriplesExtractor` uses Apache Jena to parse the raw RDF content and extract all triples.
-It tries each RDF serialization in order until one succeeds: JSON-LD → Turtle → N-Triples → RDF/XML.
-All extracted triples are returned as `List<RdfClaim>`.
-Blank nodes are handled via Jena's built-in blank node representation.
-
-The extraction returns a `NonCredentialVerificationResult` — a subclass of `CredentialVerificationResult` with `issuer`, `issuanceDate`, and `credentialId` set to `null` (absent from non-credential RDF documents).
-The `claims` field contains all extracted `RdfClaim` instances, which pass through `ProtectedNamespaceFilter` before being stored in the graph.
+`NonCredentialIngestionStrategy` delegates raw-triple extraction to `ClaimExtractionService.extractAllTriples()`, which uses Apache Jena to parse the body and tries each RDF serialization in order until one succeeds: JSON-LD → Turtle → N-Triples → RDF/XML.
+Blank nodes are handled via Jena's built-in blank-node representation.
+Extracted claims pass through `ProtectedNamespaceFilter.filterClaims()` and the result is a `NonCredentialVerificationResult` — a subclass of `CredentialVerificationResult` with `issuer`, `issuanceDate`, and `credentialId` set to `null` (absent from non-credential RDF documents).
+A payload that contains no triples is rejected with a 400 (`"Non-credential RDF content contains no triples"`).
 
 NOTE: SHACL schema validation is not invoked during upload for non-credential RDF assets, even when `federated-catalogue.verification.schema=true`.
-The `UNKNOWN` format path returns before reaching `validateSchema()`.
-This flag only affects credential uploads.
+The non-credential strategy does not call `SchemaValidationService` at all — credential-pipeline concepts (semantic checks, schema validation, signature verification) do not apply.
 On-demand validation against specific SHACL shapes is available via the `POST /assets/validate` endpoint.
 
 NOTE: Whether an RDF document enters this path depends on MIME type classification by `RdfDetector` (see <<_non_rdf_asset_upload>>) and the `FormatDetector` outcome.
@@ -692,9 +708,36 @@ Content classified as `UNKNOWN` (no recognized credential structure) is routed t
 |===
 | Format | Label | Detection criteria
 | Loire JWT (ICAM v24.07 / W3C VC-JOSE-COSE) | `GAIAX_V2_LOIRE` | JWT envelope with recognized `typ`/`cty` headers (see table below)
-| Generic VC 2.0 (JSON-LD or JWT with `vc`/`vp` wrapper) | `VC2_DANUBETECH` | VC 2.0 context present; does not match Loire header criteria
-| Non-credential RDF | `UNKNOWN` | No recognized credential format — all triples extracted via `JenaAllTriplesExtractor`
+| Generic VC 2.0 (JSON-LD or JWT with `vc`/`vp` wrapper, plus VC 2.0 Enveloped VC/VP wrappers) | `VC2_DANUBETECH` | VC 2.0 context present; does not match Loire header criteria
+| Non-credential RDF | `UNKNOWN` | No recognized credential format — routed to `NonCredentialIngestionStrategy`, which extracts all triples via `ClaimExtractionService`
 |===
+
+**Context-first discrimination — why `EnvelopedVerifiablePresentation` (EVP) is `VC2_DANUBETECH` and not non-credential RDF.**
+A JSON-LD body that begins with `{` — for example an EVP wrapper
+
+[source,json]
+----
+{
+  "@context": "https://www.w3.org/ns/credentials/v2",
+  "type": "EnvelopedVerifiablePresentation",
+  "id": "data:application/vp+jwt,eyJ..."
+}
+----
+
+is not a JWT, so `LoireCredentialProcessor` skips it (its `match()` requires a parsed JWT in the `DetectionContext`).
+`Vc2DanubeTechCredentialProcessor` then matches on the **`@context` URL alone** (`https://www.w3.org/ns/credentials/v2`), not on the `type` value.
+The VC 2.0 context is the credential-family signal; once present, the payload belongs to the credential pipeline regardless of which W3C VC 2.0 shape it carries — plain VC, plain VP, `EnvelopedVerifiableCredential` (EVC), or EVP.
+Inside `CredentialVerificationStrategy`, `EnvelopedCredentialResolver.extractEnvelopedJwt()` then recognises the EVC/EVP wrapper by `type` + context and unwraps the inner JWT from the `data:` URI for downstream verification.
+
+Routing an EVP through `NonCredentialIngestionStrategy` would be wrong: the wrapper would be stored as raw triples (a `EnvelopedVerifiablePresentation` node with a `data:` URI as `id`) and the inner credential would never be inspected — silent loss of every claim that actually matters.
+
+**Why `VC2_DANUBETECH` is the correct destination — and where `GAIAX_V2_LOIRE` comes from.**
+The catalogue's core VC 2.0 pipeline is built on the danubetech `verifiable-credentials-java` library, which expects a credential with a `vc` (or VP with a `vp`) claim wrapper around its `@context`, `type`, and `credentialSubject` fields — the W3C VC 2.0 JSON-LD shape.
+EVC and EVP wrappers, despite being JSON-LD with a `data:` URI inside, conform to that family and are correctly absorbed by the danubetech path; the inner JWT is then unwrapped and re-entered into the pipeline.
+
+`GAIAX_V2_LOIRE` was carved out as a separate format precisely because Gaia-X ICAM 24.07 deviates from the W3C / danubetech shape: Loire JWTs carry the credential fields as **top-level JWT payload claims** with **no `vc` or `vp` claim wrapper** (see <<_loire_jwt_parsing>>).
+The danubetech parser cannot consume a Loire payload directly, so Loire needs its own processor (`LoireCredentialProcessor` + `LoireJwtParser`).
+Anything that *is* W3C VC 2.0 — including EVC and EVP wrappers — belongs on the danubetech path and is correctly classified as `VC2_DANUBETECH`.
 
 The detector accepts two families of JWT header values (see ADR 8):
 
@@ -744,7 +787,9 @@ After detection, the preprocessor unwraps the JWT envelope to produce the JSON-L
 [[_jwt_signature_verification]]
 ===== JWT Signature Verification
 
-The `JwtSignatureVerifier` is a Spring `@Component` that performs cryptographic verification of compact JWT serializations. It is invoked by `CredentialVerificationStrategy` when signature verification is enabled (`verifyVCSignatures=true` or `verifyVPSignatures=true`).
+The `JwtSignatureVerifier` is a Spring `@Component` in the `verification.signature` sub-package that performs cryptographic verification of compact JWT serializations.
+It is invoked by `CredentialFormatProcessor` implementations (during outer-envelope processing) and by `EnvelopedCredentialResolver` (when verifying inner VC JWTs inside a VP); `CredentialVerificationStrategy` itself does not call it directly.
+Signature verification runs only when the caller requests it (`verifyVCSignatures=true` or `verifyVPSignatures=true`).
 
 The verification sequence:
 
@@ -1533,7 +1578,7 @@ flowchart TD
     Extract --> Detect{RdfDetector:\nis RDF?}
     Detect -->|Yes| Format{FormatDetector:\ncredential format?}
     Format -->|GAIAX_V2_LOIRE\nor VC2_DANUBETECH| VerifyCred[Credential Verification Pipeline\nsemantic + schema + signature]
-    Format -->|UNKNOWN| ExtractAll[JenaAllTriplesExtractor:\nextract all triples]
+    Format -->|UNKNOWN| ExtractAll[NonCredentialIngestionStrategy:\nextract all triples]
     VerifyCred --> IriRdf[IriGenerator:\nextract IRI from content]
     ExtractAll --> IriRdf
     IriRdf --> StoreCred[storeCredential\nmetadata + claims + graph]
@@ -1675,14 +1720,14 @@ Five delegate services in `fc-service-server` implement the admin endpoints, eac
 | `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
 |===
 
-Two components in `fc-service-core` read admin-controlled settings during normal catalogue operations:
+These components in `fc-service-core` read admin-controlled settings during normal catalogue operations:
 
 [options="header",cols="1,1,2"]
 |===
 | Component | Triggered by | Effect of admin configuration
-| `LoireMatcher` | Format classification (per request) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether to attempt Loire classification at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
+| `LoirePolicyEnforcer` | Loire envelope processing (per request, via `LoireCredentialProcessor`) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether Loire-specific policies (issuer `did:web` restriction, trust-chain validation) apply at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
 | `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the corresponding validator path is skipped or rejected.
-| `CredentialVerificationStrategy` | Credential verification | Reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline. The Gaia-X enabled flag is consulted via `TrustFrameworkService` (see `LoireMatcher` above)
+| `CredentialVerificationStrategy` | Credential verification | Reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline. The Gaia-X enabled flag is consulted via `TrustFrameworkService` (see `LoirePolicyEnforcer` above)
 |===
 
 NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
@@ -1721,6 +1766,46 @@ public class CredentialVerificationResult extends VerificationResult {
 
 The participant ID that must be checked against the uploading user lives in different fields depending on the role: for `ServiceOffering` it is on `issuer`, for `Participant` it is on `id`.
 This role-conditional dispatch is performed by the caller (typically `ParticipantsService`/`AssetStoreImpl`) based on the `role` field — no separate result type is required.
+
+===== CredentialVerificationResult vs. NonCredentialVerificationResult
+
+The two result types exist because the catalogue accepts two structurally different inputs through the same endpoint, and the meaning of "verification" differs sharply between them.
+
+`CredentialVerificationResult` is the output of the **VC pipeline** — the chain of checks defined by the W3C VC data model: JWT signature verification, issuer DID resolution, `iss == holder` semantic guard, `validFrom`/`validUntil` window checks, semantic type resolution against the trust-framework bundle, and (when enabled) SHACL schema validation.
+Every field on the result reflects something the VC pipeline produced: `issuer` (a DID URI), `issuedDateTime`, `validators` (one per signed JWS), `role` and `frameworkProfileId` (from `TrustFrameworkRegistry.resolveRole()`), `id` (the `credentialSubject.id`).
+Those fields can only be populated *because the input was a Verifiable Credential* with the corresponding cryptographic and semantic structure.
+
+`NonCredentialVerificationResult` is the output of the **non-credential ingestion path** — plain RDF (Turtle, N-Triples, RDF/XML, or JSON-LD without a credential context).
+There is no issuer, no signature, no `credentialSubject`, no `validFrom`, no type-to-role mapping to perform; the only meaningful output is the extracted triple set.
+Accordingly, `issuer`, `issuedDateTime`, `id`, `role`, `frameworkProfileId`, and `validators` are all `null` on this subtype, and the parent API model's `@NotNull` constraints on those fields are deliberately not enforced here.
+`NonCredentialVerificationResult` extends `CredentialVerificationResult` purely so both strategies can share the unified `RdfIngestionStrategy.ingest()` return type — the subclass relationship is a Liskov-friendly "everything null that doesn't apply", not a claim that a non-credential is a kind of credential.
+
+**Why "verification" appears in the name of a non-credential result.**
+In this code base, *verification* names the ingest-time step regardless of whether the W3C VC pipeline applies.
+For a credential the step is the full pipeline; for plain RDF the step is just "parse + extract + filter `fcmeta:`".
+The unified terminology mirrors the unified ingest interface; it does **not** imply schema validation has run.
+
+**Schema validation is a separate concept.**
+Schema validation against stored SHACL shapes is available through two independent flows, and neither is what produces a `*VerificationResult`:
+
+* **At upload time**, when `federated-catalogue.verification.schema=true` (off by default), the **credential** upload path additionally invokes `SchemaValidationService` after the VC pipeline.
+A failure aborts the upload with a verification exception — the report is surfaced through the HTTP error, not through `CredentialVerificationResult`.
+For non-credential RDF the upload path currently does not invoke `SchemaValidationService` regardless of this flag (see the NOTE under <<_non_credential_rdf_extraction>>).
+* **On demand**, `POST /assets/validate` (handled by `AssetValidationService`; see <<_on_demand_asset_validation>>) validates any stored asset — credentials, non-credential RDF, plain JSON, XML — against the applicable schemas and persists a `ValidationResult` row carrying the report and an `outdated` flag.
+
+The two flows are orthogonal to ingest-time verification:
+
+[options="header",cols="1,2,2"]
+|===
+| Aspect | Ingest-time verification (`/assets` upload, `/verification`) | On-demand validation (`/assets/validate`)
+| Applies to | Credentials → full VC pipeline; non-credential RDF → triple extraction only | Any stored asset — credentials, non-credential RDF, plain JSON, XML
+| Owned by | `VerificationServiceImpl` → `RdfIngestionStrategy` | `AssetValidationService` → `ValidationStrategy` chain
+| Schema validation | Optional, gated by `federated-catalogue.verification.schema` (default off). When enabled it runs as part of the credential upload path; failures abort the upload via exception. Currently not wired for non-credential RDF uploads. | Always available, dispatched by asset type (SHACL / JSON Schema / XML Schema)
+| Result type | `CredentialVerificationResult` or `NonCredentialVerificationResult` (carries claims, role, validators, warnings — but not a schema report) | `ValidationResult` (persisted, with `outdated` flag and full conformance report)
+|===
+
+So the name `NonCredentialVerificationResult` does not exclude schema validation as a concept for non-credential assets — it only says: "this is the output of the ingest path, on a payload that is not a credential, therefore the VC-specific fields are null".
+Schema conformance, when it is checked, lives in a separate result type entirely.
 
 ==== Claim
 

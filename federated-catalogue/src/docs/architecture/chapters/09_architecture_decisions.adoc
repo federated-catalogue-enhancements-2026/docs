@@ -434,11 +434,16 @@ The mapping is therefore inactive in practice today and exists as a zero-cost sa
 
 **`TrustFrameworkService` (new bean):** mediates the DB-backed enabled flag per framework family (table `trust_frameworks`).
 Other bounded contexts inject this service instead of the repository directly — preserving the bounded-context boundary.
-`LoireMatcher` consults `isEnabled("gaia-x")` before attempting Loire classification; the admin API uses `setEnabled(family, enabled)` to toggle.
+`LoirePolicyEnforcer` consults `isEnabled("gaia-x")` before applying Loire-specific policies; the admin API uses `setEnabled(family, enabled)` to toggle.
 
-**`LoireMatcher` (new bean, `@Order(1) FormatMatcher`):** replaces the previous inline Loire detection in `CredentialFormatDetector`.
-The detector is now an empty orchestrator that iterates the chain of `FormatMatcher` beans; adding a new credential format requires only a new matcher implementation.
-`LoireMatcher` reads the Trust Anchor Registry URL from its bundle's `properties.trust_anchor_url` — the configuration travels with the bundle rather than living in `application.yml`.
+**`CredentialFormatProcessor` chain (new):** replaces the previous inline format detection in `CredentialFormatDetector` and the earlier `FormatMatcher` interface.
+Each processor is a `@Component @Order(n)` bean owning the full lifecycle for one credential family — `match` (classification), `process` (outer-envelope unwrap, JWT signature verification when applicable, format-specific policy enforcement), and `unwrapNested` (nested-payload unwrap for inner VCs).
+`CredentialFormatDetector` is now an empty orchestrator that iterates the chain and returns the first non-`UNKNOWN` classification.
+The current implementations are `LoireCredentialProcessor` (Gaia-X ICAM 24.07) and `Vc2DanubeTechCredentialProcessor` (W3C VC 2.0 JSON-LD / JWT); adding a new credential format requires only a new processor implementation, no edits to the detector or the verification strategy.
+
+**`LoirePolicyEnforcer` (new bean):** owns Loire-specific verification policies (issuer `did:web` restriction, `x5u` trust-chain validation against the Gaia-X Trust Anchor Registry).
+Reads the Trust Anchor Registry URL from its bundle's `properties.trust_anchor_url` — the configuration travels with the bundle rather than living in `application.yml`.
+The enforcer is a no-op when the `gaia-x` family is disabled, so any processor can call `enforceIfApplicable()` without pre-checking enablement.
 
 **`TrustFrameworkBaseClass` enum:** removed.
 Call sites use `ResolvedRole` (a record carrying `frameworkProfileId: String` and `role: String`).
