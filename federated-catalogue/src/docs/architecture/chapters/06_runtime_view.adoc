@@ -1209,7 +1209,7 @@ sequenceDiagram
     participant API
     participant VerificationService
     User ->> + API:POST /verification<br>(?verifySchema=...&verifyVPSignature=...&verifyVCSignature=...)
-    API ->> + VerificationService:verifyCredential(credential, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
+    API ->> + VerificationService:ingest(credential, verifySemantics, verifySchema, verifyVPSig, verifyVCSig)
     VerificationService ->> VerificationService: [Verify Syntax]
     opt verifySemantics [default true]
         VerificationService ->> VerificationService: [Verify Semantic]
@@ -1315,7 +1315,10 @@ sequenceDiagram
 The verification of credentials consists of up to four stages, each independently configurable (see <<_verification_profiles>>).
 Besides verifying the credential, additional tasks are executed (e.g., format detection, parsing, claim extraction).
 
-`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full format detection, VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`. See <<_verification_strategy_pattern>> for details.
+`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `RdfIngestionStrategy` (currently `CredentialVerificationStrategy`).
+The strategy contains the full format detection, VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic.
+If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`.
+See <<_verification_strategy_pattern>> for details.
 
 **Format detection** is always active. `CredentialFormatDetector` iterates an ordered chain of `FormatMatcher` beans — `LoireMatcher` (`@Order(1)`, only active when the `gaia-x` family is enabled via `TrustFrameworkService`), `DanubeTechFormatMatcher` (`@Order(3)`) — and returns the first non-`UNKNOWN` classification.
 Credentials without a VC 2.0 context URI are rejected.

@@ -146,7 +146,7 @@ The catalogue implementation is structured into two main components _fc-service-
 a| Responsible for applying the defined verification rules on credentials (Verifiable Presentations or standalone Verifiable Credentials) and extracting claims. Also handles non-credential RDF assets. Accepts JWT-wrapped credentials per ICAM v24.07 (Gaia-X Loire) and generic VC 2.0 JSON-LD.
 
 * **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
-* **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `VerificationStrategy` implementation (currently `CredentialVerificationStrategy`).
+* **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to a `RdfIngestionStrategy` implementation (currently `CredentialVerificationStrategy`).
 * **Format detection:** `FormatDetector` classifies incoming RDF content. Recognized credential formats (Loire JWT, VC 2.0) enter the credential verification pipeline. Content classified as `UNKNOWN` (no recognized credential format) is routed to the non-credential RDF extraction path — all triples are extracted via `JenaAllTriplesExtractor`. See <<_format_detection>>.
 * **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `JenaAllTriplesExtractor` extracts all triples using Apache Jena. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted `RdfClaim` instances. See <<_non_credential_rdf_extraction>>.
 * **JWT content preprocessing:** `JwtContentPreprocessor` detects JWT-wrapped credentials using a two-signal approach (Content-Type header as primary signal, body prefix as fallback) and unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_jwt_content_preprocessing>>.
@@ -270,7 +270,8 @@ Typed result subclasses (`CredentialVerificationResultParticipant`, `…Offering
 [#_verification_strategy_pattern]
 ===== Verification Strategy Pattern
 
-The `VerificationServiceImpl` follows the Strategy pattern. It acts as a thin Context that maintains per-request verification toggles (`verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature`) and delegates all verification and claim extraction logic to a `VerificationStrategy` injected via Spring's `@Qualifier`.
+The `VerificationServiceImpl` follows the Strategy pattern.
+It acts as a thin Context that maintains per-request verification toggles (`verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature`) and delegates all verification and claim extraction logic to a `RdfIngestionStrategy` injected via Spring's `@Qualifier`.
 
 The `resolveStrategy(ContentAccessor)` method selects the appropriate strategy for a given payload. Currently it always resolves to `CredentialVerificationStrategy`.
 
@@ -290,7 +291,7 @@ classDiagram
     }
     class VerificationStrategy {
         <<interface>>
-        +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
+        +ingest(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
         +extractClaims(payload) List~RdfClaim~
     }
     class CredentialVerificationStrategy {
@@ -300,7 +301,7 @@ classDiagram
         -claimExtractionService: ClaimExtractionService
         -trustFrameworkRegistry: TrustFrameworkRegistry
         +extractClaims(payload) List~RdfClaim~
-        +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
+        +ingest(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
     }
     class CredentialFormatDetector {
         -matchers : List~FormatMatcher~
@@ -369,8 +370,8 @@ The `resolveStrategy(ContentAccessor)` method always resolves to `CredentialVeri
 `CredentialVerificationStrategy` implements all verification and claim extraction logic.
 When the matcher chain returns a recognized credential format (`GAIAX_V2_LOIRE` or `VC2_DANUBETECH`), the full credential verification pipeline runs.
 When the chain returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` to extract all triples from the raw RDF content — returning a `NonCredentialVerificationResult`.
-In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
-The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+In `ingest()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
+The `RdfIngestionStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
 
 `LoireMatcher` (`@Order(1)`) is the first matcher in the chain.
 It only activates when the `gaia-x` trust-framework family is enabled in persistence — checked via `TrustFrameworkService.isEnabled("gaia-x")` — and reads the Trust Anchor Registry URL from the bundle's own `properties.trust_anchor_url`, rather than from application-level configuration.
@@ -523,7 +524,7 @@ The filter is applied at three ingestion boundaries:
 [options="header",cols="2,3"]
 |===
 | Boundary | Integration point
-| Credential upload and claim extraction | `CredentialVerificationStrategy.verifyCredential()` — explicitly calls `filterClaims()` after claim extraction; propagates filter warnings to `CredentialVerificationResult.warnings`.
+| Credential upload and claim extraction | `CredentialVerificationStrategy.ingest()` — explicitly calls `filterClaims()` after claim extraction; propagates filter warnings to `CredentialVerificationResult.warnings`.
 | Schema import and update (`POST /schemas`, `PUT /schemas/{id}`) | `SchemaStoreImpl.analyzeSchema()` — calls `filterModel()` on the parsed Jena RDF model before schema analysis proceeds; propagates filter warnings to `SchemaResult.warnings` in the API response.
 | Graph rebuild (`POST /actuator/graph-rebuild`) | `GraphRebuilder.addAssetToGraph()` — explicitly calls `filterClaims()` after re-extracting claims from stored credentials, ensuring the rebuilt graph is clean.
 |===
