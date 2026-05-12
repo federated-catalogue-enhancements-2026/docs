@@ -47,7 +47,7 @@ Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` t
 Two independent classifications apply to every asset:
 
 * **`content_kind`** (`RDF`, `NON_RDF`) — the **format** of the originally uploaded payload.
-* **`AssetType`** (`MACHINE_READABLE`, `HUMAN_READABLE`, or `NULL`) — the **role** in an MR-HR pair: the structured counterpart, the human-facing counterpart, or unpaired. It is *not* a statement about content format. A `MACHINE_READABLE` asset is simply the side of an MR-HR link intended for automated processing; it may itself be RDF (e.g., a JSON-LD credential) or NON_RDF (e.g., a CSV or JSON file paired with a PDF).
+* **`AssetType`** (`MACHINE_READABLE`, `HUMAN_READABLE`, or `NULL`) — the **role** in an MR-HR pair, with a content-format constraint on the MR side. `MACHINE_READABLE` means the payload is itself machine-parseable: RDF (JSON-LD credential, shapes graph, …) or a structured non-RDF format (JSON, CSV, XML). Opaque binaries (PDFs, images) are never `MACHINE_READABLE`. `HUMAN_READABLE` is the human-facing counterpart (PDF, HTML, DOCX, plain text). `NULL` means the asset is unpaired.
 
 These axes are orthogonal, so all five combinations below are valid states; the table records what each means and whether the asset is a candidate for metadata enrichment.
 
@@ -61,7 +61,7 @@ These axes are orthogonal, so all five combinations below are valid states; the 
 | `NON_RDF` | `HUMAN_READABLE` | Human-facing attachment of an MR-HR pair; **cannot be enriched**
 |===
 
-NOTE: Enrichment eligibility is decided **only** by `content_kind` (must be `NON_RDF`) and `AssetType ≠ HUMAN_READABLE`. The name `MACHINE_READABLE` does not imply that the asset already contains machine-parseable claims — enrichment is precisely the mechanism for attaching such claims to a non-RDF payload.
+NOTE: Enrichment eligibility is decided by `content_kind = NON_RDF` and `AssetType ≠ HUMAN_READABLE`. The `MACHINE_READABLE` constraint means the payload is parseable (structured non-RDF or RDF); enrichment specifically attaches *graph-queryable* RDF claims on top of a payload that was not RDF at upload time, regardless of whether the payload was otherwise structured.
 
 **Metadata enrichment** is the process of attaching graph-queryable RDF triples to a non-RDF asset. An RDF payload is uploaded via `POST /assets` whose subject IRI matches an existing non-RDF asset. The service:
 
