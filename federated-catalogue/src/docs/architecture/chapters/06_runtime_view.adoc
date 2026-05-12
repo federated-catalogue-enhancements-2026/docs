@@ -658,13 +658,7 @@ sequenceDiagram
     API -->> - User:201 Created (metadata with contentType, fileSize, iri)
 ....
 
-**Step 5-6:** `RdfDetector` checks the MIME type against the configured allowlist and, for `application/json`, inspects content for a JSON-LD `@context` pattern.
-
-**Step 7-8:** `IriGenerator` generates a UUID URN (`urn:uuid:...`) per RFC 4122 for the non-RDF asset. Each upload receives a unique IRI.
-
-**Step 9:** `storeUnverified` persists the metadata (including the assigned IRI) in PostgreSQL. If an asset with the same content hash already exists, HTTP 409 (Conflict) is returned with the existing IRI in the error response.
-
-**Step 11:** The raw bytes are written to the `assetFileStore`, not the schema/context File Store.
+`RdfDetector` classifies the upload by MIME type against the configured allowlist and, for `application/json`, by scanning for a JSON-LD `@context` pattern. Non-RDF uploads receive a freshly generated UUID URN (`urn:uuid:...`, per RFC 4122) as their IRI. Metadata is persisted to PostgreSQL and the raw bytes to the asset File Store (separate from the schema/context File Store). If an asset with the same content hash already exists, the request fails with HTTP 409 and the existing IRI is returned in the error response.
 
 NOTE: After a non-RDF asset has been uploaded, its IRI can be used as the subject of a subsequent RDF upload via the same `POST /assets` endpoint to attach graph-queryable metadata — see <<_adding_metadata_enrichment_to_a_non_rdf_asset>>.
 
@@ -707,15 +701,9 @@ sequenceDiagram
     API -->> - User:200 OK
 ....
 
-**Step 7:** The primary subject IRI is extracted from the RDF payload (e.g., `@id` / `credentialSubject.id`).
+The primary subject IRI is extracted from the RDF payload (e.g., `@id` / `credentialSubject.id`). `findEnrichableAsset` performs a single combined check on that IRI: it returns an existing record only when the asset's `content_kind = NON_RDF`; it throws HTTP 422 if the asset is `HUMAN_READABLE`; and it returns empty when no asset matches or when the matched asset has `content_kind = RDF`. An empty result causes the upload to fall through to the standard RDF asset path (201 Created).
 
-**Step 8-9:** `findEnrichableAsset` performs a single combined check: it returns an existing record only when the asset's `content_kind = NON_RDF`; it throws HTTP 422 if the asset is `HUMAN_READABLE`; and it returns empty when no asset matches or when the matched asset has `content_kind = RDF`. An empty result causes the upload to fall through to the standard RDF asset path (201 Created).
-
-**Step 10:** The payload is parsed and validated to contain at least one triple whose subject is the asset's IRI (otherwise HTTP 400).
-
-**Step 11:** `ProtectedNamespaceFilter` strips any triples in protected namespaces (e.g., `fcmeta:`).
-
-**Steps 12-17:** Old graph triples for the IRI are deleted and replaced; `saveEnrichedContent` writes the raw RDF payload to the `content` column. The change is captured in the Hibernate Envers audit trail with `changeComment = "Metadata enriched"`. If the graph backend is disabled (`graphstore.impl=none`), the request fails with HTTP 503 before any state change.
+The payload must contain at least one triple whose subject is the asset's IRI (otherwise HTTP 400). `ProtectedNamespaceFilter` strips any triples in protected namespaces (e.g., `fcmeta:`). The existing graph triples for the IRI are then deleted and replaced, and `saveEnrichedContent` writes the raw RDF payload to the `content` column of the same `assets` row — no new row is created. Hibernate Envers captures the prior state as a new revision in `assets_aud` with `changeComment = "Metadata enriched"`. If the graph backend is disabled (`graphstore.impl=none`), the request fails with HTTP 503 before any state change.
 
 ==== Updating an Asset
 
@@ -1333,7 +1321,7 @@ sequenceDiagram
     AssetStore -->> - Service: storedMetadata
 ....
 
-NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets at initial upload. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the metadata filter endpoints. After metadata enrichment, the graph triples are written and the asset becomes queryable.
+NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets at initial upload. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the `GET /assets` filter endpoint (see <<_filtering_all_assets>>). After metadata enrichment, the graph triples are written and the asset becomes queryable.
 
 ==== Store Metadata Enrichment to the Asset Store
 

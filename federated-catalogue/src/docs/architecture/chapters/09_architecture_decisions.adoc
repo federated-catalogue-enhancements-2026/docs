@@ -70,7 +70,7 @@ This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that 
 
 **Rationale:** Reusing the existing endpoint and metadata infrastructure avoids duplication of lifecycle management, filtering, pagination, and access control. The `RdfDetector` allowlist gives operators explicit control over which content types trigger verification. Separate File Store instances keep asset blobs isolated from schema caches for operational clarity.
 
-Non-RDF assets can be subsequently enriched with graph-queryable RDF metadata via the same `POST /assets` endpoint (see ADR 10). To distinguish the original upload modality from the post-enrichment state, a `content_kind` column (`RDF` / `NON_RDF`) was added to the `assets` table. `content_kind` is set at first upload and never changed by enrichment.
+Non-RDF assets can be subsequently enriched with graph-queryable RDF metadata via the same `POST /assets` endpoint (see ADR 15). To distinguish the original upload modality from the post-enrichment state, a `content_kind` column (`RDF` / `NON_RDF`) was added to the `assets` table. `content_kind` is set at first upload and never changed by enrichment.
 
 === ADR 5: Fine-Grained Permission-Based Authorization
 
@@ -330,7 +330,7 @@ If a future 2511 spec version introduces `owl:equivalentClass`, `owl:intersectio
 * Non-Gaia-X VC 2.0 (`VC2_DANUBETECH`) intentionally bypasses Gaia-X type resolution — future trust framework support for non-Gaia-X federations will add pluggable type resolution.
 * The SRS preamble envisions the catalogue as a generic, trust-framework-agnostic metadata store. Removing a single legacy trust framework generation aligns with this direction — the catalogue's verification pipeline is designed to be pluggable, not permanently coupled to any specific Gaia-X release.
 
-=== ADR 10: Metadata Enrichment of Non-RDF Assets
+=== ADR 15: Metadata Enrichment of Non-RDF Assets
 
 **Context:** Non-RDF assets (PDFs, images, plain JSON, …) are stored as opaque blobs. Their content is indexed only in the File Store and metadata columns; they are invisible to SPARQL/openCypher queries. Operators need a way to annotate non-RDF assets with machine-readable, graph-queryable metadata (e.g., type, classification, provenance triples) without replacing the underlying file.
 
