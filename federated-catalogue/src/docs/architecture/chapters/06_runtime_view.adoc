@@ -900,6 +900,59 @@ sequenceDiagram
     API -->> - User:200 ProvenanceVerificationResult
 ....
 
+==== Running a Compliance Check
+
+Submits an asset's credential payload to a registered trust framework's external compliance service via `POST /assets/{id}/compliance-check`.
+The `frameworkProfileId` in the request body identifies which trust framework profile to use; the catalogue resolves the correct client, calls the external service, persists the result, and returns the typed outcome.
+
+`GET /assets/{id}/compliance-checks` returns previously stored results for an asset (paginated).
+
+[mermaid,width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant Auth as Authentication
+    participant API as ComplianceCheckService
+    participant Orchestrator as ComplianceCheckOrchestrator
+    participant Registry as TrustFrameworkRegistry
+    participant TFService as TrustFrameworkService
+    participant Client as TrustFrameworkClient
+    participant ResultStore as ComplianceResultStore
+
+    User ->> + Auth:Authorize(ASSET_UPDATE | ADMIN_ALL)
+    Auth -->> - User:OK
+    User ->> + API:POST /assets/{id}/compliance-check {frameworkProfileId, credential}
+    API ->> + Orchestrator:check(assetId, frameworkProfileId, credential)
+    Orchestrator ->> + Registry:getProfileConfig(frameworkProfileId)
+    Registry -->> - Orchestrator:TrustFrameworkProfileConfig (clientType, serviceUrl, ...)
+    alt profile not found
+        Orchestrator -->> API:ClientException → 400
+    end
+    Orchestrator ->> + TFService:isEnabled(familyId)
+    TFService -->> - Orchestrator:boolean
+    alt family disabled
+        Orchestrator -->> API:ConflictException → 409
+    end
+    Orchestrator ->> + Client:check(credential, config)
+    Note right of Client: GxdchComplianceClient calls external GXDCH service,\nthen verifies attestation JWT locally
+    Client -->> - Orchestrator:IssuedAttestation | UnverifiableAttestation
+    Orchestrator -->> - API:ComplianceCheckOutcome
+    API ->> + ResultStore:store(assetId, profileId, familyId, outcome)
+    ResultStore -->> - API:recordId
+    API -->> - User:200 ComplianceCheckResult {conforms, attestationCredential?, failureCategory?}
+....
+
+**Outcome mapping:**
+
+[options="header",cols="1,1,3"]
+|===
+| Outcome | `conforms` | Notes
+| `IssuedAttestation` | `true` | `attestationCredential` carries the raw attestation JWT; `credentialValidUntil` indicates its expiry.
+| `UnverifiableAttestation` | `false` | `failureCategory` names the reason (enum); the external service may or may not have responded.
+|===
+
+Transport failures are mapped to HTTP errors before the result store is reached: a timeout from the external service returns 504; other I/O failures return 503.
 
 ==== Get the current composite Schema
 
