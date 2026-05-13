@@ -46,7 +46,7 @@ ifndef::imagesdir[:imagesdir: ../../images]
 |The DID presented in an VC or proof links to an DID-Document. The DID-Document is a description of an identity. It is stored dezentralized by the owner. The DID-Document provides cryptographic information that can be used to verify any document. Thereby, it can be ensured that the document is trusted.
 
 |Asset
-|Generic term for any content stored in the catalogue — including RDF-based credentials and non-RDF content (PDFs, JSON, YAML, images). At the API level, the unified `/assets` endpoint handles both types. Every asset is identified by an IRI (see ADR 7). See ADR 4.
+|Generic term for any content stored in the catalogue — including RDF-based credentials and non-RDF content (PDFs, JSON, YAML, images). At the API level, the unified `/assets` endpoint handles both types. Every asset is identified by an IRI (see ADR 7). Assets carry a `content_kind` (`RDF` or `NON_RDF`) recording the original upload modality, and an `AssetType` encoding the MR-HR linking status. Non-RDF assets can be enriched with graph-queryable metadata via the same upload endpoint (see Metadata Enrichment). See ADR 4, ADR 15.
 
 |IRI (Internationalized Resource Identifier)
 |A unique identifier for an asset in the catalogue. Supported formats include DIDs (e.g., `did:web:example.com`), UUID URNs (e.g., `urn:uuid:550e8400-...`), generic URNs, and HTTP/HTTPS IRIs. For RDF assets, the IRI is extracted from the content; for non-RDF assets, a UUID URN is generated per RFC 4122. See ADR 7.
@@ -82,7 +82,13 @@ The identifier must be a valid IRI (see ADR 7).
 |A bidirectional association between a machine-readable asset and a human-readable asset. Stored as two columns on the `assets` table (`asset_type` and `linked_asset_id` FK). Mirrored in the graph DB as `fcmeta:hasHumanReadable` and `fcmeta:hasMachineReadable` RDF triples for semantic queryability.
 
 |AssetType
-|An enum distinguishing asset variants: `MACHINE_READABLE`, `HUMAN_READABLE`, `GENERIC` (no link). Stored in the `asset_type` column on the `assets` table.
+|An enum distinguishing the role of an asset in an MR-HR pair: `MACHINE_READABLE` or `HUMAN_READABLE`. Stored in the `asset_type` column on the `assets` table; the column is `NULL` for standalone assets that are not part of an MR-HR pair.
+
+|ContentKind
+|An enum distinguishing asset content modality: `RDF` (the uploaded payload was RDF) and `NON_RDF` (the uploaded payload was non-RDF binary or text). Stored in the `content_kind` column on the `assets` table. Set at first upload; never changed by metadata enrichment. Orthogonal to `AssetType` (which encodes the MR-HR linking status). See ADR 15.
+
+|Metadata Enrichment
+|The process of attaching graph-queryable RDF triples to an existing non-RDF asset via `POST /assets`. The uploaded RDF payload's primary subject IRI must match the non-RDF asset's IRI, and the payload must contain at least one triple whose subject is that IRI. The enrichment replaces any previously uploaded metadata (overwrite semantics), writes triples to the graph store, and stores the raw RDF in `assets.content` so the graph can be rebuilt from PostgreSQL. The Envers audit trail records the operation with `changeComment = "Metadata enriched"`. Returns HTTP 200. `HUMAN_READABLE` assets cannot be enriched (HTTP 422); a disabled graph backend returns HTTP 503. See ADR 15.
 
 |fcmeta:hasHumanReadable
 |RDF property in the protected `fcmeta:` namespace (`https://projects.eclipse.org/projects/technology.xfsc/federated-catalogue/meta#`) written to the graph DB when an asset link is created. Points from a machine-readable asset's IRI to its human-readable counterpart's IRI.

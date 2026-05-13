@@ -70,6 +70,8 @@ This aligns with CAT-FR-SF-04 (remove forced validation): validation flags that 
 
 **Rationale:** Reusing the existing endpoint and metadata infrastructure avoids duplication of lifecycle management, filtering, pagination, and access control. The `RdfDetector` allowlist gives operators explicit control over which content types trigger verification. Separate File Store instances keep asset blobs isolated from schema caches for operational clarity.
 
+Non-RDF assets can be subsequently enriched with graph-queryable RDF metadata via the same `POST /assets` endpoint (see ADR 15). To distinguish the original upload modality from the post-enrichment state, a `content_kind` column (`RDF` / `NON_RDF`) was added to the `assets` table. `content_kind` is set at first upload and never changed by enrichment.
+
 === ADR 5: Fine-Grained Permission-Based Authorization
 
 **Context:** The original authorization model used four coarse-grained roles (Ro-MU-CA, Ro-MU-A, Ro-AS-Afootnote:[Originally named `Ro-SD-A` (Self-Description Administrator). Renamed to `Ro-AS-A` (Asset Administrator) to align with the generic asset terminology.], Ro-PA-A) to control API access. This presented several limitations:
@@ -437,3 +439,25 @@ Type URIs are now declared exclusively in each bundle's `framework.yaml`.
 * Bundle-per-framework gives a clear extension point — a developer adding a new framework drops a directory; the registry treats it identically to the bundled one.
 * Explicit role declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three role names, not the full transitive subclass closure.
 * Supersedes the hardcoded `loireBaseClassUris` / `legacyBaseClassUris` maps and `service-offering.type` / `participant.type` / `resource.type` properties introduced in ADR 9.
+
+=== ADR 15: Metadata Enrichment of Non-RDF Assets
+
+**Context:** Non-RDF assets (PDFs, images, plain JSON, …) are stored as opaque blobs. Their content is indexed only in the File Store and metadata columns; they are invisible to SPARQL/openCypher queries. Operators need a way to annotate non-RDF assets with machine-readable, graph-queryable metadata (e.g., type, classification, provenance triples) without replacing the underlying file.
+
+Two approaches were considered:
+
+1. **Separate enrichment endpoint** (`POST /assets/{id}/metadata`): explicit, avoids routing ambiguity. Adds a new endpoint and a new service path.
+2. **Unified `POST /assets` with subject-IRI routing:** reuse the existing upload endpoint; when the uploaded RDF's primary `@id` matches an existing non-RDF asset, route to the enrichment path. No new endpoint required.
+
+**Decision:** Option 2 — subject-IRI routing at `POST /assets`.
+
+* When uploaded RDF is detected and the asset store reports an existing non-RDF asset for the payload's primary subject IRI, the request is routed to the enrichment path. The lookup also enforces that `HUMAN_READABLE` assets cannot be enriched — they are rejected with HTTP 422.
+* The enrichment path validates that the payload contains at least one triple whose subject is the asset's IRI, filters protected-namespace triples (`ProtectedNamespaceFilter`), replaces the asset's graph triples (`deleteClaims` → `addClaims`), and persists the raw RDF to `assets.content`. The change is captured in the Hibernate Envers audit trail with `changeComment = "Metadata enriched"`. Returns HTTP 200.
+* Each enrichment upload fully replaces the previous metadata (overwrite, no merge). This matches the existing RDF version-update semantics.
+* The `content_kind` column is never changed by enrichment. It always records the original upload modality.
+* Storing the enrichment RDF in `assets.content` means the existing PostgreSQL→graph rebuild process picks up enriched non-RDF assets automatically — no extra rebuild logic needed.
+* Enrichment requires an active graph backend. If `graphstore.impl=none`, the request fails with HTTP 503 before any state change — graph writes are mandatory for this path.
+
+**Rationale:** Reusing the existing endpoint avoids a new API surface and keeps the upload contract consistent. Routing on `content_kind` is unambiguous and preserves backward compatibility — uploads for RDF assets and non-RDF assets are unaffected. Overwrite semantics simplify the data model: no partial-merge conflicts, no ordering dependencies between enrichment uploads.
+
+**Related:** ADR 4, ADR 7.
