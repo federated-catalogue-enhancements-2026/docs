@@ -15,7 +15,7 @@ This chapter first defines a generic workflow for write operations (<<_generic_c
 
 === Generic Control Flow for write operations
 
-The write flow branches depending on whether the uploaded content is RDF or non-RDF. RDF content goes through the full verification pipeline and is indexed in the graph database. Non-RDF content bypasses verification and graph storage entirely.
+The write flow branches depending on whether the uploaded content is RDF or non-RDF. RDF content goes through the full verification pipeline and is indexed in the graph database. Non-RDF content bypasses verification and graph storage entirely. A third path exists when the uploaded RDF's primary subject IRI matches an existing non-RDF asset: the content is treated as metadata enrichment and the asset is updated rather than a new one created — see <<_adding_metadata_enrichment_to_a_non_rdf_asset>>.
 
 [mermaid, width=2000]
 ....
@@ -659,13 +659,52 @@ sequenceDiagram
     API -->> - User:201 Created (metadata with contentType, fileSize, iri)
 ....
 
-**Step 5-6:** `RdfDetector` checks the MIME type against the configured allowlist and, for `application/json`, inspects content for a JSON-LD `@context` pattern.
+`RdfDetector` classifies the upload by MIME type against the configured allowlist and, for `application/json`, by scanning for a JSON-LD `@context` pattern. Non-RDF uploads receive a freshly generated UUID URN (`urn:uuid:...`, per RFC 4122) as their IRI. Metadata is persisted to PostgreSQL and the raw bytes to the asset File Store (separate from the schema/context File Store). If an asset with the same content hash already exists, the request fails with HTTP 409 and the existing IRI is returned in the error response.
 
-**Step 7-8:** `IriGenerator` generates a UUID URN (`urn:uuid:...`) per RFC 4122 for the non-RDF asset. Each upload receives a unique IRI.
+NOTE: After a non-RDF asset has been uploaded, its IRI can be used as the subject of a subsequent RDF upload via the same `POST /assets` endpoint to attach graph-queryable metadata — see <<_adding_metadata_enrichment_to_a_non_rdf_asset>>.
 
-**Step 9:** `storeUnverified` persists the metadata (including the assigned IRI) in PostgreSQL. If an asset with the same content hash already exists, HTTP 409 (Conflict) is returned with the existing IRI in the error response.
+[[_adding_metadata_enrichment_to_a_non_rdf_asset]]
+==== Adding Metadata Enrichment to a Non-RDF Asset
 
-**Step 11:** The raw bytes are written to the `assetFileStore`, not the schema/context File Store.
+An RDF payload whose primary `@id` matches the IRI of an existing non-RDF asset is routed to the metadata enrichment path. No new asset is created; instead, the graph triples for that IRI are replaced and the `content` column is overwritten with the enrichment RDF. Returns HTTP 200.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    actor User
+    participant Auth as Authentication
+    participant API as AssetUploadController
+    participant Service as AssetUploadService
+    participant RdfDetector
+    participant AssetStore as AssetStore
+    participant GraphDB as Graph-Database
+
+    User ->> + Auth:Authorize(ASSET_CREATE | ADMIN_ALL)
+    Auth -->> - User:OK
+    User ->> + API:POST /assets (RDF payload)
+    API ->> + Service:processUpload(bytes, contentType)
+    Service ->> + RdfDetector:isRdf(contentType, bytes)
+    RdfDetector -->> - Service:true
+    Service ->> Service:extractSubjectIdFromRdf(payload)
+    Service ->> + AssetStore:findEnrichableAsset(subjectId)
+    Note over AssetStore: throws 422 if asset_type = HUMAN_READABLE;<br/>returns empty if not found or contentKind = RDF
+    AssetStore -->> - Service:existing record (contentKind = NON_RDF)
+    Service ->> Service:parseRdfClaims; require ≥1 claim with subject = iri
+    Service ->> Service:protectedNamespaceFilter.filterClaims
+    Service ->> + GraphDB:deleteClaims(subjectId)
+    GraphDB -->> - Service:OK
+    Service ->> + GraphDB:addClaims(filteredClaims, subjectId)
+    GraphDB -->> - Service:OK
+    Service ->> + AssetStore:saveEnrichedContent(record, rawRdfPayload)
+    AssetStore -->> - Service:OK
+    Service -->> - API:AssetEnrichmentResponse
+    API -->> - User:200 OK
+....
+
+The primary subject IRI is extracted from the RDF payload (e.g., `@id` / `credentialSubject.id`). `findEnrichableAsset` performs a single combined check on that IRI: it returns an existing record only when the asset's `content_kind = NON_RDF`; it throws HTTP 422 if the asset is `HUMAN_READABLE`; and it returns empty when no asset matches or when the matched asset has `content_kind = RDF`. An empty result causes the upload to fall through to the standard RDF asset path (201 Created).
+
+The payload must contain at least one triple whose subject is the asset's IRI (otherwise HTTP 400). `ProtectedNamespaceFilter` strips any triples in protected namespaces (e.g., `fcmeta:`). The existing graph triples for the IRI are then deleted and replaced, and `saveEnrichedContent` writes the raw RDF payload to the `content` column of the same `assets` row — no new row is created. Hibernate Envers captures the prior state as a new revision in `assets_aud` with `changeComment = "Metadata enriched"`. If the graph backend is disabled (`graphstore.impl=none`), the request fails with HTTP 503 before any state change.
 
 ==== Updating an Asset
 
@@ -1283,7 +1322,32 @@ sequenceDiagram
     AssetStore -->> - Service: storedMetadata
 ....
 
-NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the metadata filter endpoints.
+NOTE: No `addClaims` or `deleteClaims` calls to the Graph Database occur for non-RDF assets at initial upload. Assets are invisible to SPARQL/openCypher queries and can only be retrieved via the `GET /assets` filter endpoint (see <<_filtering_all_assets>>). After metadata enrichment, the graph triples are written and the asset becomes queryable.
+
+==== Store Metadata Enrichment to the Asset Store
+
+This sequence diagram shows the detailed store flow for metadata enrichment. The service replaces the asset's graph triples directly on the `GraphStore`, then persists the raw RDF to the `content` column on the existing non-RDF row via `AssetStore.saveEnrichedContent`.
+
+[mermaid, width=2000]
+....
+sequenceDiagram
+    autonumber
+    participant Service
+    participant AssetStore as AssetStore
+    participant MetaData as MetaData Store
+    participant GraphDB as Graph-Database
+    Service ->> + GraphDB: deleteClaims(subjectId)
+    GraphDB -->> - Service: OK
+    Service ->> + GraphDB: addClaims(filteredClaims, subjectId)
+    GraphDB -->> - Service: OK
+    Service ->> + AssetStore: saveEnrichedContent(record, rawRdfPayload)
+    AssetStore ->> + MetaData: setContent + setChangeComment("Metadata enriched")
+    MetaData -->> - AssetStore: OK
+    Note right of MetaData: content_kind remains NON_RDF;<br/>Envers writes a new revision automatically
+    AssetStore -->> - Service: OK
+....
+
+NOTE: Graph operations run before the PostgreSQL write. If the graph backend is disabled, the request fails fast with HTTP 503 before any state change. The `content_kind` column is never changed by enrichment — it always reflects the original upload modality.
 
 ==== Periodic Validation of Signatures
 This sequence diagram shows the detailed flow, when checking the expiration date of the signatures of all credentials.  This sequence is to be periodically triggered.
