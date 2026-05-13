@@ -111,4 +111,13 @@ The identifier must be a valid IRI (see ADR 7).
 |Resolved Role
 |A `(frameworkProfileId, role)` pair returned by `TrustFrameworkRegistry.resolveRole(typeUri)`. `ResolvedRole.UNKNOWN` represents a type not claimed by any loaded bundle.
 
+|Format Matcher
+|An ordered Spring `@Component` implementing `FormatMatcher` that classifies an incoming credential payload into a `CredentialFormat`. `CredentialFormatDetector` iterates the chain by `@Order` (lowest first) and returns the first non-`UNKNOWN` result. `LoireMatcher` (`@Order(1)`) and `DanubeTechFormatMatcher` (`@Order(3)`) are the current implementations.
+
+|Trust Framework Service
+|`TrustFrameworkService` is the bounded-context entry point for the `trust_frameworks` DB table. Mediates the admin-toggleable enabled flag per framework family. Distinct from `TrustFrameworkRegistry`, which is the in-memory, classpath-bundle-backed index of role-resolution and bundle config.
+
+|Bundle Properties
+|Free-form `properties:` map declared in a bundle's `framework.yaml`, carrying framework-specific runtime values consumed by that bundle's own beans (e.g. `trust_anchor_url` read by `LoireMatcher`). Not interpreted by the `TrustFrameworkRegistry`.
+
 |===

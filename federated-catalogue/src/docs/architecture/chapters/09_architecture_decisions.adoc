@@ -399,21 +399,52 @@ roles:
 properties: { }                          # framework-specific metadata (reserved)
 ----
 
+**Role declaration is a manual, per-framework curation step — not auto-derivable.**
+The `roles:` map is the bundle author's hand-written declaration of which classes the catalogue dispatches on as top-level credential subjects.
+It cannot be extracted from the ontology, because trust-framework ontologies do not mark classes as "catalogue roles":
+
+* In Gaia-X 2511 specifically (`gx-2511`, the only framework currently shipped), every `gx:` subject in the ontology is exactly one of `owl:Class`, `owl:DatatypeProperty`, or `owl:ObjectProperty`.
+There is no `gx:CatalogueRole` superclass, no `isRole` annotation property, no skos scheme that groups Participant + ServiceOffering + Resource together.
+The 213 named OWL classes are structurally indistinguishable from one another as far as the model is concerned — Address, Endpoint, RegistrationNumber and Participant are peers in the type hierarchy.
+* `skos:inScheme` exists on most classes but is purely topical categorisation (legal, storage, compute, …); the `gx:participant` scheme happens to contain only Participant, but `gx:legal` contains 37 classes that are not roles.
+* JSON-Schema-based frameworks (e.g. UNTP, see ADR 12) have no OWL ontology at all; the role list is declared explicitly under `types:` for the same reason.
+
+Where role-ness *is* encoded — outside the ontology — is in three operative places: the conformity body's issuer behaviour (which `credentialSubject.type` values it actually mints as top-level VCs), the framework's architecture/compliance specification prose, and sample VPs published by the conformity body.
+None of these are machine-readable from the catalogue's perspective.
+
+The practical consequence: onboarding a new trust framework is a curation task.
+The bundle author reads the framework's spec and conformity-body docs, identifies the small set (typically three to ten) of credential types the catalogue should surface, and writes them into `roles:`.
+The list is short by design and stable across ontology revisions; subclass-closure indexing handles the rest of the type hierarchy automatically.
+
 **Role indexing (SHACL bundles):** For each declared role, the registry takes the root URI as `namespace + roleName`, then walks DOWN the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every reachable class under that role.
-The optional `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role — this is the mechanism that maps `gx:DigitalServiceOffering` to the `ServiceOffering` role.
+The optional `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.
 Bundles whose `validation_type` is not `shacl` are loaded but deferred (no validation engine wired yet); a WARN is logged.
+
+The Loire 2511 bundle declares `gx:DigitalServiceOffering` as an `additional_root` of the `ServiceOffering` role.
+The decision is defensive: the upstream specification is internally inconsistent on DSO — the ontology declares the class abstract (`skos:definition` "the virtual base class for any kind of digital service (for inheritance not for instanciation)"), defines no `rdfs:subClassOf gx:ServiceOffering` link and no concrete subclasses, yet the SHACL layer assigns it its own `sh:targetClass`.
+A `rdfs:subClassOf*` walk from `gx:ServiceOffering` therefore never reaches DSO, and routing has to be added explicitly if the catalogue is to accept DSO credentials at all.
+Empirically the conformity body does not currently issue DSO at the top level (the Loire compliance dispatcher has no DSO-specific validation component, the published compliance criteria do not cover DSO, and the official Loire test presentations contain only `gx:LegalPerson`, `gx:Issuer`, and `gx:VatID` under the Participant family).
+The mapping is therefore inactive in practice today and exists as a zero-cost safety net so DSO credentials, if they ever appear, land somewhere rather than failing with "no proper CredentialSubject found."
 
 **`TrustFrameworkRegistry` (new bean, registered by `TrustFrameworkRegistryConfig`):**
 
 * `resolveRole(typeUri): ResolvedRole` — returns `(frameworkProfileId, role)` for a credential subject's type URI, or `ResolvedRole.UNKNOWN` if no bundle claims the type
-* `getBundles()` / `getBundle(profileId)` — bundle lookup
+* `getActiveBundles()` — collection of bundles whose validation engine is wired (deferred bundles excluded)
+* `getBundle(profileId)` — bundle lookup
 * `getEffectiveRoles(profileId)` — role set declared by a bundle
 * `isFrameworkEnabled(profileId)` — true for SHACL-active bundles
 
+**`TrustFrameworkService` (new bean):** mediates the DB-backed enabled flag per framework family (table `trust_frameworks`).
+Other bounded contexts inject this service instead of the repository directly — preserving the bounded-context boundary.
+`LoireMatcher` consults `isEnabled("gaia-x")` before attempting Loire classification; the admin API uses `setEnabled(family, enabled)` to toggle.
+
+**`LoireMatcher` (new bean, `@Order(1) FormatMatcher`):** replaces the previous inline Loire detection in `CredentialFormatDetector`.
+The detector is now an empty orchestrator that iterates the chain of `FormatMatcher` beans; adding a new credential format requires only a new matcher implementation.
+`LoireMatcher` reads the Trust Anchor Registry URL from its bundle's `properties.trust_anchor_url` — the configuration travels with the bundle rather than living in `application.yml`.
+
 **`TrustFrameworkBaseClass` enum:** removed.
 Call sites use `ResolvedRole` (a record carrying `frameworkProfileId: String` and `role: String`).
-Storage and API routing dispatch on the role string directly.
-The role names `Participant`, `ServiceOffering`, and `Resource` remain referenced as constants (`VerificationConstants.ROLE_*`) by the typed verification endpoints, but the bundle config — not Java source — is the authority for what roles exist.
+Storage and API routing dispatch on the role string directly; the bundle config — not Java source — is the authority for what roles exist.
 
 **`CredentialFormat`:** the existing `GAIAX_V2_LOIRE` / `VC2_DANUBETECH` enum continues to drive format detection (JWT structure, header validation, unwrapping).
 It is independent of role resolution: any credential whose subject type URI is registered by some bundle resolves to that bundle's role, regardless of which JWT format envelope carries it.
@@ -425,6 +456,11 @@ Adding a new framework is a classpath-resource change — drop a new `trustframe
 
 **Removed configuration:** the `federated-catalogue.verification.{participant,resource,service-offering}.type` properties (and the `service-offering.additional-types` workaround) are no longer read.
 Type URIs are now declared exclusively in each bundle's `framework.yaml`.
+
+**Result materialization:**
+
+The verification core returns a single generic result schema across all roles; the `role` field on the result carries the bundle-declared role name (e.g. `Participant`) and consumers dispatch on that string.
+There is no per-role Java result type and no `result_type` declaration in `framework.yaml`: the role name itself is the dispatch key, and adding a new role to a bundle requires no Java change.
 
 **Out of scope for this ADR:**
 
@@ -439,6 +475,9 @@ Type URIs are now declared exclusively in each bundle's `framework.yaml`.
 * Bundle-per-framework gives a clear extension point — a developer adding a new framework drops a directory; the registry treats it identically to the bundled one.
 * Explicit role declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three role names, not the full transitive subclass closure.
 * Supersedes the hardcoded `loireBaseClassUris` / `legacyBaseClassUris` maps and `service-offering.type` / `participant.type` / `resource.type` properties introduced in ADR 9.
+* The typed result POJOs `CredentialVerificationResultParticipant`, `CredentialVerificationResultOffering`, and `CredentialVerificationResultResource` were removed without an adapter or deprecation window.
+No known external Java consumers of these typed return values exist: the catalogue's public interface is its REST/OpenAPI endpoints and NATS events, not Java class types.
+An adapter phase would delay removal without providing safety to any known consumer.
 
 === ADR 15: Metadata Enrichment of Non-RDF Assets
 

@@ -259,17 +259,13 @@ Notes:
 classDiagram
     class VerificationService {
         <<interface>>
-        +verifyParticipantCredential(payload) CredentialVerificationResultParticipant
-        +verifyOfferingCredential(payload) CredentialVerificationResultOffering
-        +verifyResourceCredential(payload) CredentialVerificationResultResource
         +verifyCredential(payload) CredentialVerificationResult
         +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSig, verifyVCSig) CredentialVerificationResult
-        +extractClaims(payload) List~RdfClaim~
-        +verifyCredentialAgainstSchema(payload, schema) SchemaValidationResult
-        +verifyCredentialAgainstCompositeSchema(payload) SchemaValidationResult
     }
-    note for VerificationService "verifyCredentialAgainstSchema and\nverifyCredentialAgainstCompositeSchema\nare deprecated - use SchemaValidationService directly"
 ....
+
+The single `CredentialVerificationResult` type carries the resolved role (e.g. `Participant`, `ServiceOffering`, `Resource` for the `gaia-x-2511` bundle) as a string field populated from `ResolvedRole.role`.
+Typed result subclasses (`CredentialVerificationResultParticipant`, `…Offering`, `…Resource`) and the deprecated schema-validation overloads have been removed; callers use `SchemaValidationService` directly for schema validation.
 
 [#_verification_strategy_pattern]
 ===== Verification Strategy Pattern
@@ -277,6 +273,10 @@ classDiagram
 The `VerificationServiceImpl` follows the Strategy pattern. It acts as a thin Context that maintains per-request verification toggles (`verifySemantics`, `verifySchema`, `verifyVPSignature`, `verifyVCSignature`) and delegates all verification and claim extraction logic to a `VerificationStrategy` injected via Spring's `@Qualifier`.
 
 The `resolveStrategy(ContentAccessor)` method selects the appropriate strategy for a given payload. Currently it always resolves to `CredentialVerificationStrategy`.
+
+Format classification is delegated to an **ordered chain of `FormatMatcher` beans** orchestrated by `CredentialFormatDetector`.
+Each matcher is a Spring `@Component` carrying an `@Order(n)` annotation; the detector iterates the chain and the first matcher that returns a non-`UNKNOWN` classification wins.
+Adding a new credential format is a matter of dropping in a new `FormatMatcher` bean — no edits to the strategy or detector itself.
 
 [mermaid, width=2000]
 ....
@@ -290,19 +290,35 @@ classDiagram
     }
     class VerificationStrategy {
         <<interface>>
-        +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
-
+        +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
+        +extractClaims(payload) List~RdfClaim~
     }
     class CredentialVerificationStrategy {
         -filter: ProtectedNamespaceFilter
         -jwtSignatureVerifier: JwtSignatureVerifier
-        -formatDetector: FormatDetector
+        -formatDetector: CredentialFormatDetector
         -claimExtractionService: ClaimExtractionService
+        -trustFrameworkRegistry: TrustFrameworkRegistry
         +extractClaims(payload) List~RdfClaim~
-        +verifyCredential(payload, strict, expectedClass, flags) CredentialVerificationResult
+        +verifyCredential(payload, verifySemantics, verifySchema, verifyVPSignatures, verifyVCSignatures) CredentialVerificationResult
     }
-    class FormatDetector {
+    class CredentialFormatDetector {
+        -matchers : List~FormatMatcher~
         +detect(headers, payload) CredentialFormat
+    }
+    class FormatMatcher {
+        <<interface>>
+        +match(context) CredentialFormat
+    }
+    class LoireMatcher {
+        +match(context) CredentialFormat
+    }
+    class DanubeTechFormatMatcher {
+        +match(context) CredentialFormat
+    }
+    class TrustFrameworkService {
+        +isEnabled(family) boolean
+        +getConfig(family) Optional~TrustFrameworkConfig~
     }
     class JwtContentPreprocessor {
         +isJwtWrapped(contentType, body) boolean
@@ -321,6 +337,7 @@ classDiagram
     }
     class CredentialVerificationResult {
         +id: String
+        +role: String
         +claims: List~RdfClaim~
         +validators: List~Validator~
     }
@@ -333,7 +350,12 @@ classDiagram
     VerificationServiceImpl --> VerificationStrategy : delegates to
     VerificationStrategy <|.. CredentialVerificationStrategy
     CredentialVerificationStrategy --> ProtectedNamespaceFilter : filters via
-    CredentialVerificationStrategy --> FormatDetector : classifies format
+    CredentialVerificationStrategy --> CredentialFormatDetector : classifies format
+    CredentialFormatDetector --> FormatMatcher : iterates ordered chain
+    FormatMatcher <|.. LoireMatcher
+    FormatMatcher <|.. DanubeTechFormatMatcher
+    LoireMatcher --> TrustFrameworkService : isEnabled("gaia-x")
+    LoireMatcher --> TrustFrameworkRegistry : reads trust_anchor_url\nfrom bundle properties
     CredentialVerificationStrategy --> JwtSignatureVerifier : verifies JWT signatures
     CredentialVerificationStrategy --> JwtContentPreprocessor : detects + unwraps JWT
     CredentialVerificationStrategy --> LoireJwtParser : parses Loire JWT payload
@@ -342,13 +364,17 @@ classDiagram
 ....
 
 `VerificationServiceImpl` injects the strategy via `@Qualifier("credentialVerificationStrategy")`, providing compile-time safety.
-The `resolveStrategy(ContentAccessor)` method always resolves to `CredentialVerificationStrategy`, which internally routes between credential verification and non-credential RDF extraction based on `FormatDetector` output.
+The `resolveStrategy(ContentAccessor)` method always resolves to `CredentialVerificationStrategy`, which internally routes between credential verification and non-credential RDF extraction based on `CredentialFormatDetector` output.
 
 `CredentialVerificationStrategy` implements all verification and claim extraction logic.
-When `FormatDetector` returns a recognized credential format (`GAIAX_V2_LOIRE` or `VC2_DANUBETECH`), the full credential verification pipeline runs.
-When it returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` to extract all triples from the raw RDF content — returning a `NonCredentialVerificationResult`.
+When the matcher chain returns a recognized credential format (`GAIAX_V2_LOIRE` or `VC2_DANUBETECH`), the full credential verification pipeline runs.
+When the chain returns `UNKNOWN`, the strategy delegates to `JenaAllTriplesExtractor` to extract all triples from the raw RDF content — returning a `NonCredentialVerificationResult`.
 In `verifyCredential()`, it explicitly calls `ProtectedNamespaceFilter.filterClaims()` after claim extraction and propagates any filter warnings to the result.
 The `VerificationStrategy` interface Javadoc documents the namespace filtering requirement (CAT-FR-GD-09) for all implementations.
+
+`LoireMatcher` (`@Order(1)`) is the first matcher in the chain.
+It only activates when the `gaia-x` trust-framework family is enabled in persistence — checked via `TrustFrameworkService.isEnabled("gaia-x")` — and reads the Trust Anchor Registry URL from the bundle's own `properties.trust_anchor_url`, rather than from application-level configuration.
+`DanubeTechFormatMatcher` (`@Order(3)`) handles VC 2.0 JSON-LD credentials and runs after `LoireMatcher` so that a JWT carrying a Loire `typ` header is not absorbed by the generic VC 2.0 path.
 
 [[_trust_framework_bundles_and_role_resolution]]
 ===== Trust Framework Bundles and Role Resolution
@@ -363,12 +389,13 @@ See ADR 10 for the full rationale.
 | `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit role declarations
 | `ontology.ttl` | OWL class hierarchy used to derive each role's subclass closure (optional for non-SHACL bundles)
 | `shapes.ttl` | SHACL shapes loaded into the composite schema graph via the schema-store seed at boot. `SchemaStoreImpl.initializeDefaultSchemas()` seeds each SHACL bundle's `ontology.ttl` and `shapes.ttl` into the schema-store DB on first boot. The `defaultschema/` directory is retained as an operator-overlay fallback for custom schemas not associated with any bundle.
+| `properties:` block in `framework.yaml` | Framework-specific runtime values consumed by the bundle's own beans (e.g. `trust_anchor_url` read by `LoireMatcher`). Not interpreted by the registry.
 |===
 
 `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
 Bundles that fail to load are logged at WARN and skipped — they do not abort the load of remaining bundles.
 
-`TrustFrameworkRegistryImpl` indexes the loaded bundles and exposes role resolution to the verification pipeline:
+`TrustFrameworkRegistry` indexes the loaded bundles and exposes role resolution to the verification pipeline:
 
 [mermaid,width=1600]
 ....
@@ -376,7 +403,7 @@ classDiagram
     class TrustFrameworkRegistry {
         <<interface>>
         +resolveRole(typeUri) ResolvedRole
-        +getBundles() Collection~TrustFrameworkBundle~
+        +getActiveBundles() Collection~TrustFrameworkBundle~
         +getBundle(profileId) Optional~TrustFrameworkBundle~
         +getEffectiveRoles(profileId) Set~String~
         +isFrameworkEnabled(profileId) boolean
@@ -414,6 +441,14 @@ classDiagram
     class TrustFrameworkBundleLoader {
         +loadFromClasspath() List~TrustFrameworkBundle~
     }
+    class TrustFrameworkService {
+        +isEnabled(family) boolean
+        +setEnabled(family, enabled) boolean
+        +getConfig(family) Optional~TrustFrameworkConfig~
+    }
+    class TrustFrameworkRepository {
+        <<JPA>>
+    }
     TrustFrameworkRegistry <|.. TrustFrameworkRegistryImpl
     TrustFrameworkRegistryImpl --> TrustFrameworkBundle : indexes
     TrustFrameworkBundle --> FrameworkBundleConfig
@@ -421,7 +456,21 @@ classDiagram
     TrustFrameworkRegistryImpl --> ResolvedRole : returns
     TrustFrameworkBundleLoader --> TrustFrameworkBundle : produces
     CredentialVerificationStrategy --> TrustFrameworkRegistry : resolves credential subject roles
+    TrustFrameworkService --> TrustFrameworkRepository : reads/writes\nenabled flag
+    LoireMatcher --> TrustFrameworkService : isEnabled("gaia-x")
 ....
+
+The bounded context exposes two beans with complementary responsibilities:
+
+[options="header",cols="1,2,3"]
+|===
+| Bean | Backing store | Responsibility
+| `TrustFrameworkRegistry` | Classpath bundles (in-memory at boot) | Owns the type-URI → role index and the bundle config tree. Read-only after startup.
+| `TrustFrameworkService` | `trust_frameworks` DB table | Mediates the admin-toggleable enabled flag per framework family. The only bean other beans inject when they need to read or change the runtime on/off state.
+|===
+
+This split keeps the bundle (config, roles, ontology) immutable in code/resources, while the runtime enable/disable decision stays as operator state in the database.
+Other bounded contexts (verification, admin API) inject `TrustFrameworkService` rather than the `TrustFrameworkRepository` directly, preserving the bounded-context boundary.
 
 **Role indexing (SHACL bundles):** for each role declared in `framework.yaml`, the registry takes the root URI as `namespace + roleName`, then walks the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every subclass under that role.
 The `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.
@@ -430,7 +479,7 @@ Bundles whose `validation_type` is not `shacl` are loaded but deferred (no valid
 **Resolution at verification time:** `CredentialVerificationStrategy` calls `registry.resolveRole(typeUri)` for each `credentialSubject` type encountered in a credential or VP.
 The result `(frameworkProfileId, role)` drives:
 
-* dispatch to the typed verification result (`Participant` / `ServiceOffering` / `Resource` for the bundled `gaia-x-2511` profile — see `VerificationConstants.ROLE_*`),
+* the `role` field carried on the single generic `CredentialVerificationResult` (the role name is taken verbatim from the bundle's `framework.yaml` — e.g. `Participant`, `ServiceOffering`, `Resource` for `gaia-x-2511`),
 * the typed-endpoint expected-role check (`/participants`, `/service-offerings`, `/resources` reject credentials whose subjects do not resolve to the matching role).
 
 A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the credential is treated as a non-typed RDF claim set and routed accordingly.
@@ -445,7 +494,14 @@ A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the cre
 | `namespace` | `https://w3id.org/gaia-x/2511#`
 | `validation_type` | `shacl`
 | Declared roles | `Participant`, `ServiceOffering` (with `additional_roots: [DigitalServiceOffering]`), `Resource`
+| `properties.trust_anchor_url` | URL of the Gaia-X Trust Anchor Registry consulted during Loire `x5u` trust-chain validation. Read at runtime by `LoireMatcher`.
 |===
+
+**Bundle properties.**
+The `properties:` map in `framework.yaml` carries framework-specific runtime values that belong with the bundle rather than with application configuration.
+The Loire example above is the current pattern: the trust-anchor registry URL is intrinsic to the Gaia-X family, so it lives next to the rest of the Gaia-X bundle and travels with it.
+Beans consume properties through `TrustFrameworkRegistry.getBundle(profileId).config().properties()`.
+The map is reserved for the bundle's own beans — the registry itself does not interpret its contents.
 
 [[_protected_namespace_filter]]
 ===== Protected Namespace Filter
@@ -1639,8 +1695,9 @@ Two components in `fc-service-core` read admin-controlled settings during normal
 [options="header",cols="1,1,2"]
 |===
 | Component | Triggered by | Effect of admin configuration
+| `LoireMatcher` | Format classification (per request) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether to attempt Loire classification at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
 | `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the corresponding validator path is skipped or rejected.
-| `CredentialVerificationStrategy` | Upload credential verification | Reads `trust_frameworks` for the Gaia-X toggle; reads only `SHACL` module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path) before optional upload schema checks. JSON/XML/OWL toggles are not used in this path.
+| `CredentialVerificationStrategy` | Credential verification | Reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline. The Gaia-X enabled flag is consulted via `TrustFrameworkService` (see `LoireMatcher` above)
 |===
 
 NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
@@ -1651,46 +1708,34 @@ The `trust_frameworks` and `admin_config` tables that back this configuration la
 
 ==== VerificationResults
 
-Verification results are slightly different depending on whether a Participant credential or an Offering credential is verified.
+A single generic `CredentialVerificationResult` covers every recognized credential type.
+The previous Participant/Offering/Resource subclasses have been removed; the role (and its originating framework profile) is carried as a field on the generic result, populated from `TrustFrameworkRegistry.resolveRole(typeUri)`.
 
 [source,java]
 ----
-
 public class CredentialVerificationResult extends VerificationResult {
 
-  /** The credential subject ID. */
+  /** credentialSubject (id) of this credential. */
   private String id;
 
-  /** The claims extracted from the credential. */
-  private List<RdfClaim> claims;
+  /** Graph-DB triples extracted from the credential. */
+  private List<RdfClaim> graphClaims;
 
-  /** The validators that signed the credential. */
+  /** Validators that signed parts of the credential. */
   private List<Validator> validators;
-}
 
-/**
- * POJO Class for holding verification results specific to Offerings.
- */
-class CredentialVerificationResultOffering extends CredentialVerificationResult {
-}
-
-/**
- * POJO Class for holding verification results specific to Participants.
- */
-class CredentialVerificationResultParticipant extends CredentialVerificationResult {
-  /**
-   * The Name of the Participant.
-   */
-  private String participantName;
-  /**
-   * The public key of the participant.
-   */
-  private String participantPublicKey;
+  // Inherited from generated VerificationResult:
+  //   String role                 — resolved trust-framework role name (e.g. "Participant")
+  //   String frameworkProfileId   — bundle profile id that resolved the role (e.g. "gaia-x-2511")
+  //   String issuer               — DID URI of the credential issuer
+  //   Instant issuedDateTime, verificationTimestamp
+  //   String lifecycleStatus
+  //   List<String> validatorDids, warnings
 }
 ----
 
-Depending on the type of credential, the Participant ID that has to be checked against the user who uploads the credential, is stored in different locations.
-If the credential is a Service Offering, the ID is stored in the `issuer` variable. If the credential is a Participant, the ID is stored in the `id` variable.
+The participant ID that must be checked against the uploading user lives in different fields depending on the role: for `ServiceOffering` it is on `issuer`, for `Participant` it is on `id`.
+This role-conditional dispatch is performed by the caller (typically `ParticipantsService`/`AssetStoreImpl`) based on the `role` field — no separate result type is required.
 
 ==== Claim
 

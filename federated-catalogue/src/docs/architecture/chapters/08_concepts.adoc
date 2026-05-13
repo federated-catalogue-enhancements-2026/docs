@@ -37,6 +37,45 @@ Each supported trust framework is delivered as a self-contained classpath bundle
 A `TrustFrameworkRegistry` bean indexes all bundles at boot and resolves credential subject types to bundle-defined roles, replacing the previous hardcoded URI-to-enum mapping.
 See ADR 10 for the design rationale and <<_trust_framework_bundles_and_role_resolution,Building Block View — Trust Framework Bundles and Role Resolution>> for the runtime structure.
 
+==== Onboarding a Trust Framework: Identifying Roles
+
+The bundle's `roles:` map declares the small curated set of root classes that the catalogue dispatches on as top-level credential subjects.
+Subclass-closure indexing (`rdfs:subClassOf*`) handles the rest of the type hierarchy automatically; the curation effort is limited to picking the roots.
+
+A non-obvious property of this design: **the role list cannot be derived from the framework's ontology**.
+It is a manual, judgment-based curation step that every new bundle author has to perform, and the source-of-truth lies *outside* the ontology file.
+
+*Why the ontology cannot answer the question.* Trust-framework ontologies model the vocabulary — every class that can appear anywhere in a credential's claims graph (legal entity attributes, addresses, endpoints, value objects).
+They do not model which classes are issued as standalone top-level credentials.
+Ontologies do not mark roles: there is no `:isRole` annotation, no `:CatalogueRole` superclass, no SKOS scheme that groups roles together.
+Topical schemes (legal, storage, compute, …) categorise classes by domain and contain many non-role members.
+The role-bearing classes are structurally indistinguishable from value-object classes in the model.
+Three mechanical proxies — "every named OWL class", "every `sh:targetClass` in the SHACL shapes", "every class whose only superclass is `owl:Thing`" — all over- or under-include in practice.
+JSON-Schema-based frameworks have no OWL ontology at all; the role list is declared explicitly under the bundle's `types:` field for the same reason.
+
+*Where role-ness is encoded.* Outside the ontology, in three operative places — none of them machine-readable from the catalogue's perspective:
+
+* The conformity body's issuer behaviour — which `credentialSubject.type` values it actually mints as top-level VCs.
+Discoverable by inspecting the conformity body's compliance components and the credentials it returns.
+* The framework's compliance and architecture specifications — the per-credential-family compliance criteria.
+The presence of a "criteria for X" document is strong evidence that X is a top-level role; the absence of one for a class — even one that has a SHACL shape — is strong evidence the conformity body does not issue it.
+* Sample verifiable presentations published by the conformity body.
+Decoding the inner VCs of the official test VPs reveals the credential types that actually appear in production traffic.
+
+*Onboarding recipe.* Read the framework's spec to find the section listing top-level credential types.
+Cross-check against the conformity body's component architecture (one validation service per top-level credential family is the typical pattern) and against the conformity body's published sample VPs.
+Where the three sources agree, you have the role list.
+Where they disagree, prefer what the conformity body operatively does over what the spec aspirationally describes.
+The resulting list is short by design (typically three to ten entries) and stable across ontology revisions.
+
+*Spec inconsistencies are normal and expected.* Two patterns recur:
+
+* A class whose `skos:definition` declares it abstract ("for inheritance not for instantiation") but which carries its own `sh:targetClass` shape — the shape implies a valid credential subject; the prose implies the opposite.
+* A class that is conceptually a specialisation of another but the ontology does not declare an `rdfs:subClassOf` link between them, often because they live in different parts of the namespace or were modelled independently.
+
+When the conformity body is silent on such a class — no validation component, no criteria document, no test payload — the safe default is a defensive mapping: route the class to the most semantically adjacent existing role via `additional_roots` so credentials of that type, if they ever appear, land somewhere rather than being rejected.
+Document the mapping inline with a pointer to what would un-block dropping it (typically: confirmation from the conformity body that the class is never issued at the top level).
+
 === Admin Configuration Persistence
 
 Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` table holds structured trust framework definitions (columns: `id`, `name`, `service_url`, `api_version`, `timeout_seconds`, `enabled`, `created_at`, `updated_at`), seeded with a single Gaia-X entry. The `admin_config` table is a generic key-value store (`config_key` PK, `config_value`) for all other runtime settings:
