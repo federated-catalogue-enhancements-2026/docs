@@ -100,3 +100,41 @@ User-supplied content (assets, schemas, IRIs) is parsed only by hardened, sandbo
 |===
 
 Any new validator or store that accepts user-provided content must adopt the same posture. Hardening is enforced by tests: every new parser has at least one security-path test (malicious DTD, external `$ref`, unsafe IRI) alongside its happy-path tests.
+
+=== Asset Content Kinds and Metadata Enrichment
+
+Two independent classifications apply to every asset:
+
+* **`content_kind`** (`RDF`, `NON_RDF`) — the **format** of the originally uploaded payload.
+* **`AssetType`** (`MACHINE_READABLE`, `HUMAN_READABLE`, or `NULL`) — the **role** in an MR-HR pair, with a content-format constraint on the MR side. `MACHINE_READABLE` means the payload is itself machine-parseable: RDF (JSON-LD credential, shapes graph, …) or a structured non-RDF format (JSON, CSV, XML).
+Opaque binaries (PDFs, images) are never `MACHINE_READABLE`. `HUMAN_READABLE` is the human-facing counterpart (PDF, HTML, DOCX, plain text). `NULL` means the asset is unpaired.
+
+These axes are orthogonal, so all five combinations below are valid states; the table records what each means and whether the asset is a candidate for metadata enrichment.
+
+[options="header",cols="1,1,2"]
+|===
+| content_kind | AssetType | Meaning
+| `RDF` | _null_ | Standalone RDF asset (credential, ontology, shapes graph, …)
+| `RDF` | `MACHINE_READABLE` | RDF asset acting as the structured counterpart of an MR-HR pair
+| `NON_RDF` | _null_ | Standalone non-RDF binary/text asset (PDF, JSON, image, …); may be enriched
+| `NON_RDF` | `MACHINE_READABLE` | Non-RDF structured counterpart of an MR-HR pair (e.g., CSV paired with a PDF); may be enriched
+| `NON_RDF` | `HUMAN_READABLE` | Human-facing attachment of an MR-HR pair; **cannot be enriched**
+|===
+
+NOTE: Enrichment eligibility is decided by `content_kind = NON_RDF` and `AssetType ≠ HUMAN_READABLE`.
+The `MACHINE_READABLE` constraint means the payload is parseable (structured non-RDF or RDF); enrichment specifically attaches *graph-queryable* RDF claims on top of a payload that was not RDF at upload time, regardless of whether the payload was otherwise structured.
+
+**Metadata enrichment** is the process of attaching graph-queryable RDF triples to a non-RDF asset.
+An RDF payload is uploaded via `POST /assets` whose subject IRI matches an existing non-RDF asset.
+The service:
+
+. Parses the payload and requires at least one triple whose subject is the asset's IRI (otherwise HTTP 400).
+. Filters protected-namespace triples via `ProtectedNamespaceFilter`.
+. Replaces the asset's existing graph triples (`GraphStore.deleteClaims` → `addClaims`).
+. Persists the raw RDF payload to the `content` column on the **same `assets` row** as the non-RDF asset (`AssetStore.saveEnrichedContent`) — no new entity is created and no separate enrichment table is involved.
+Hibernate Envers records the prior state as a new revision in `assets_aud` with `changeComment = "Metadata enriched"`, so the version history of the asset includes each enrichment.
+Because the enrichment RDF lives on the asset row itself, the graph can be rebuilt from PostgreSQL at any time.
+. Returns HTTP 200; no new asset is created.
+
+`HUMAN_READABLE` assets reject enrichment with HTTP 422. If the graph backend is disabled (`graphstore.impl=none`), enrichment fails with HTTP 503 — graph writes are mandatory for this path.
+The `content_kind` is **not changed** by enrichment, and each enrichment upload replaces the previous metadata entirely (overwrite semantics — no merge).
