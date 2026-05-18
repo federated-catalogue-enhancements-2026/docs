@@ -1547,6 +1547,8 @@ flowchart TB
     style EXT fill:#e3f2fd,stroke:#42a5f5
 ....
 
+NOTE: The `Schema validation enabled?` branch combines two gates. The caller's `verifySchema` request parameter selects whether SHACL runs at all; the administrative SHACL module toggle (see ADR 16) then gates that branch independently. When `verifySchema=true` and SHACL is administratively disabled, the request short-circuits with `400 Bad Request` body `module_disabled:SHACL` before reaching the SHACL composite. The same pattern applies on the on-demand validation endpoint via `AssetValidationServiceImpl`.
+
 ===== Docker Compose configuration
 
 The default profile uses `docker-compose.yml` with `dev.env`. The strict profile adds the `docker-compose.strict.yml` overlay, which sets all verification flags to `true`:
@@ -1723,7 +1725,7 @@ Five delegate services in `fc-service-server` implement the admin endpoints, eac
 | Service | Implements | Endpoints
 | `AdminDashboardService` | `AdminApiDelegate` | `GET /admin/me` (access check), `GET /admin/stats` (metrics), `GET /admin/health` (component health), `GET /admin/keycloak-url`
 | `TrustFrameworkAdminService` | `TrustFrameworkAdminApiDelegate` | List, toggle, and update trust frameworks; checks live connectivity per framework on list
-| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService`; in upload verification, only SHACL is consulted. OWL toggles persist to `admin_config` but are not yet wired to any validation pipeline
+| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts; toggle each module on/off; expose the per-ontology subclass contribution to each registered role for the OWL module. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService` and return `400 module_disabled:<MODULE>` when off; in upload verification only SHACL is consulted, with the same error contract. The OWL toggle gates the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveRole` (see ADR 16)
 | `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
 |===
 
@@ -1733,13 +1735,25 @@ These components in `fc-service-core` read admin-controlled settings during norm
 |===
 | Component | Triggered by | Effect of admin configuration
 | `LoirePolicyEnforcer` | Loire envelope processing (per request, via `LoireCredentialProcessor`) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether Loire-specific policies (issuer `did:web` restriction, trust-chain validation) apply at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
-| `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the corresponding validator path is skipped or rejected.
-| `CredentialVerificationStrategy` | Credential verification | Reads SHACL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns HTTP 400 on schema validation requests. JSON Schema, XML Schema, and OWL toggles are persisted but not yet wired to the verification pipeline. The Gaia-X enabled flag is consulted via `TrustFrameworkService` (see `LoirePolicyEnforcer` above)
+| `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the request is rejected with `ClientException` → `400 Bad Request`, body `module_disabled:<MODULE>` (see ADR 16).
+| `CredentialVerificationStrategy` | Credential verification | Reads SHACL and OWL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns the same `400 module_disabled:SHACL` contract on requests with `verifySchema=true`. Disabling OWL bypasses the runtime composite-ontology subclass walk in `resolveRole`; credentials whose type is only reachable through that walk fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request` (see ADR 16). JSON Schema and XML Schema toggles do not bite on this path today — every credential is JSON-LD or JWT-wrapped JSON-LD and routes to SHACL. The Gaia-X enabled flag is consulted via `TrustFrameworkService`.
 |===
 
 NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
 
 The `trust_frameworks` and `admin_config` tables that back this configuration layer are documented under <<section-concepts,Cross-cutting Concepts — Admin Configuration Persistence>>.
+
+===== Schema-module admin toggles
+
+The admin schema-modules page (proxied from the demo portal to `GET /admin/schema-validation` on the catalogue) lists four toggleable modules — SHACL, JSON Schema, XML Schema, OWL — and surfaces an additional read-only endpoint, `GET /admin/schema-validation/ontologies`, backed by `OntologyImpactService`.
+
+The four toggles fall into two semantic classes (ADR 16):
+
+* **Validators (SHACL, JSON Schema, XML Schema)** gate the corresponding validator wherever the catalogue would otherwise run it (on-demand validation, and credential verification with `verifySchema=true`). When off, the affected request returns `400 Bad Request` body `module_disabled:<MODULE>`. Stored schemas remain queryable regardless of toggle state.
+
+* **OWL** gates the third tier of role resolution. When off, the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveRole` is skipped; only the registry index and `additional_roots` (ADR 10) are consulted. Credentials whose type is only reachable through the subclass walk fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request`. Registry-direct types are unaffected.
+
+`OntologyImpactService` parses each `ONTOLOGY`-type schema row with Jena and counts the `rdfs:subClassOf+` descendants reachable from each registered role's root URI (plus any `additional_roots`), aggregated across active trust-framework bundles. The result is a read-only map of *(ontology id, role name) → subclass count* so operators can see what the OWL toggle is gating before flipping it off.
 
 === Level 3: Shared data structures
 

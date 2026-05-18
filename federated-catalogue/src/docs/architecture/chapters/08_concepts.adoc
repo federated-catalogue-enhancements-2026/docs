@@ -76,6 +76,22 @@ The resulting list is short by design (typically three to ten entries) and stabl
 When the conformity body is silent on such a class — no validation component, no criteria document, no test payload — the safe default is a defensive mapping: route the class to the most semantically adjacent existing role via `additional_roots` so credentials of that type, if they ever appear, land somewhere rather than being rejected.
 Document the mapping inline with a pointer to what would un-block dropping it (typically: confirmation from the conformity body that the class is never issued at the top level).
 
+==== Type Dispatch and the OWL Toggle
+
+When a credential arrives, the catalogue maps its `credentialSubject` type URI to a trust-framework role through three tiers, in order:
+
+1. **`TrustFrameworkRegistry.typeIndex`** — a hash lookup populated at boot by walking each bundle's `ontology.ttl` from every declared role down via `rdfs:subClassOf*`. Hits here cover every class statically reachable from a role at startup.
+2. **`additional_roots`** — sibling URIs declared in `framework.yaml` for cases where the ontology's class graph does not connect the sibling to the role (see ADR 10 for the `gx:DigitalServiceOffering` example). Also indexed at boot.
+3. **Composite-ontology subclass walk** — `ClaimValidator.resolveSubjectRole` runs a SPARQL `rdfs:subClassOf+` query against the runtime composite ontology assembled from `ONTOLOGY`-type schema rows. This is the only tier that consults schemas uploaded *after* boot.
+
+The OWL administrative toggle (ADR 16) gates **tier 3 only**.
+When OWL is on, all three tiers run in order; the subclass walk closes the gap for types introduced by runtime ontology uploads.
+When OWL is off, the third tier is skipped entirely and the resolver returns `ResolvedRole.UNKNOWN` for any type that did not resolve through tiers 1 or 2.
+
+The verification entry point treats an unresolved role as a non-recoverable error: an upload whose credential type cannot be mapped to any registered role is rejected with `400 Bad Request`.
+Disabling OWL therefore has a *narrow* but *strict* effect: framework-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) keep resolving and keep being accepted; custom subclasses defined exclusively in a runtime-uploaded ontology stop resolving and are rejected.
+Gating role resolution is the most visible effect a toggle on a type-vocabulary input can have, and the one that satisfies the demonstrable-effect requirement for runtime toggles.
+
 === Admin Configuration Persistence
 
 Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` table holds structured trust framework definitions (columns: `id`, `name`, `service_url`, `api_version`, `timeout_seconds`, `enabled`, `created_at`, `updated_at`), seeded with a single Gaia-X entry. The `admin_config` table is a generic key-value store (`config_key` PK, `config_value`) for all other runtime settings:
