@@ -283,7 +283,7 @@ Notes:
         Parti ->> + AssetStore: deleteAsset(assetHash)
         AssetStore ->> + Graph: deleteClaims()
         Graph -->> - AssetStore:Null
-        Note over AssetStore: AssetDeletedEvent is published before commit;<br/>ValidationResultCleanupListener cascades<br/>removal of validation results — see _validation_result_storage.
+        Note over AssetStore: AssetDeletedEvent is published before commit;<br/>ValidationResultCleanupListener cascades removal of validation results<br/>and ProvenanceCleanupListener cascades removal of provenance credentials —<br/>see _validation_result_storage.
         AssetStore -->> - Parti: Null
 
         Parti ->> + Keycloak: DELETE /realms/gaia-x/groups/{partID}
@@ -1332,7 +1332,9 @@ See <<_format_detection>>.
 
 **Schema validation** (when enabled) checks the uploaded credentials against a composite schema of type SHACL.
 If a credential does not conform to the composite schema, a verification exception is thrown with a message containing the validation report. In that case, the verification process does not proceed, and claims are not extracted.
-Automatic schema validation against stored SHACL shapes is **disabled by default in the upload verification flow** and is gated by `federated-catalogue.verification.schema`. When enabled, upload verification still routes through `SchemaValidationService` (see <<_schema_validation_service>>). On-demand validation of stored assets — covering SHACL, JSON Schema, and XML Schema — is provided by the dedicated `AssetValidationService` (see <<_on_demand_asset_validation>>); both flows share the same `ShaclValidationExecutor` for SHACL evaluation.
+Automatic schema validation against stored SHACL shapes is **disabled by default in the upload verification flow** and is gated by `federated-catalogue.verification.schema`.
+When enabled, upload verification still routes through `SchemaValidationService` (see <<_schema_validation_service>>).
+On-demand validation of stored assets — covering SHACL, JSON Schema, and XML Schema — is provided by the dedicated `AssetValidationService` (see <<_on_demand_asset_validation>>); both flows evaluate SHACL via the same TopBraid SHACL engine.
 
 NOTE: For backward compatibility, automatic schema validation during upload can be re-enabled via the configuration property `federated-catalogue.verification.schema=true`.
 
