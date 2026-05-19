@@ -109,12 +109,11 @@ properties:
   timeout_seconds: 30
 ----
 
-`https://compliance.gaia-x.eu/v2` is a HAProxy front-end that load-balances across eleven certified GXDCH operators.
+`https://compliance.gaia-x.eu/v2` is a HAProxy front-end that load-balances across the certified GXDCH operators.
 No per-operator configuration is required; the HAProxy URL is the single canonical address for Loire v2 compliance checks.
 
 **Request / response shape.**
-The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the GXDCH compliance endpoint (e.g.
-`/v2/api/credential-offers`).
+The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the GXDCH `standard-compliance` endpoint under `/v2/api/credential-offers/standard-compliance` (see sketch below for the exact path including the required `vcid` query parameter).
 The endpoint validates the VP against Loire 2511 criteria and returns a Compliance VC JWT signed by the selected operator.
 No authentication header is required — the GXDCH endpoint is publicly accessible.
 
@@ -126,14 +125,14 @@ Content-Type: text/plain
 
 <Loire-conformant VP JWT as the raw request body>
 
-HTTP/1.1 200 OK
+HTTP/1.1 201 Created
 Content-Type: text/plain
 
 <Compliance VC JWT as the raw response body>
 ----
 
 The returned Compliance VC JWT is persisted as-is in `IssuedAttestation.rawCredential`.
-See ADR 16 for the storage rationale.
+See ADR 17 for the storage rationale.
 
 **Test coverage.**
 Live GXDCH coverage requires a deployment stage whose signing certificate is reachable via a public `x5u` URL (the Trust Anchor Registry must be able to resolve the chain).
