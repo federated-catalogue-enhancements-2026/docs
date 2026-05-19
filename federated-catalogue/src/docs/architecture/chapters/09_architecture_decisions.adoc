@@ -547,5 +547,11 @@ The asymmetry is intentional: gating role resolution is the strongest demonstrab
 * The OWL toggle is independent of the caller's `verifySchema` and `verifySemantics` flags.
 Type dispatch is a configuration of the catalogue's type system, not a per-request validation step, so disabling OWL affects every internal caller of the verification path — asset upload, provenance ingest, asset metadata flow, base subscriber, and on-demand role resolution — independent of how those callers parameterise their request.
 
-* Disabling SHACL today blocks on-demand and verification-path checks but does not yet stop the periodic revalidation sweep against the composite shapes graph.
-Closing that gap is a separate change.
+* The SHACL toggle gates the ingest path, the on-demand validation endpoint, *and* the periodic revalidation sweep over the existing claims graph.
+When SHACL is administratively disabled, `RevalidationServiceImpl.handleTask` short-circuits — the sweep skips per-asset validation rather than revoke previously-conforming assets against shapes the operator has explicitly silenced.
+The admin write path that flips SHACL back on detects the false→true transition and calls `RevalidationService.startValidating()`, which resets every chunk's `lastcheck` time so the next manager cycle re-sweeps assets that were skipped while SHACL was off; without that reset, chunks visited while SHACL was disabled would be recorded as "checked" at pickup and never re-evaluated until a new SHACL shape arrived.
+The resume hook is wired through `ObjectProvider<RevalidationService>` and is a no-op when the Revalidation bean is not registered (production wiring of the periodic sweep is not active out of the box; the gate and the resume hook are pre-positioned for when it is).
+The expectation, stated plainly: flipping SHACL off pauses both new-upload rejection and background revocation; flipping it back on resumes both, and the previously-skipped backlog is re-evaluated automatically.
+
+* On-demand validation (`POST /assets/validate`) rejects with `400 Bad Request` not only for `module_disabled:<MODULE>` but also for the broader "no validation module is enabled or applicable" case.
+Both are administrative-configuration mismatches under operator control, not server-side processing failures, so `ClientException` (400) is the appropriate mapping rather than `VerificationException` (422). 422 remains reserved for assets whose type is not validatable at all (not RDF, unsupported content type).

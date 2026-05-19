@@ -1755,6 +1755,10 @@ The four toggles fall into two semantic classes (ADR 16):
 
 `OntologyImpactService` parses each `ONTOLOGY`-type schema row with Jena and counts the `rdfs:subClassOf+` descendants reachable from each registered role's root URI (plus any `additional_roots`), aggregated across active trust-framework bundles. The result is a read-only map of *(ontology id, role name) → subclass count* so operators can see what the OWL toggle is gating before flipping it off.
 
+The result surfaces two signals the UI uses to keep the toggle decision honest. Each ontology row carries a `parseError` flag — true when the ontology fails to parse or the per-root subclass walk exceeds its two-second SPARQL timeout. The UI shows a warning row in that case so an admin does not read "zero contributions" as "safe to disable OWL"; an unparseable ontology and a parseable-but-irrelevant ontology look identical in the contributions map otherwise. A top-level `noActiveBundles` flag is set when no trust-framework bundles are currently active — contributions cannot be computed against an empty role catalogue, and the UI banners that explicitly. The two-second timeout is per registered role root, not per ontology, so a deeply cyclic `subClassOf` graph in one ontology cannot block the rest of the listing.
+
+The SHACL toggle additionally gates the background revalidation sweep (see ADR 16): when SHACL is off, `RevalidationServiceImpl.handleTask` skips per-asset validation rather than revoke previously-conforming assets; when the admin flips SHACL back on, the write path triggers a full re-sweep via `RevalidationService.startValidating()` so chunks skipped while SHACL was off are revisited. The resume hook is optional (`ObjectProvider<RevalidationService>`) and no-ops when the Revalidation bean is not registered.
+
 === Level 3: Shared data structures
 
 ==== VerificationResults
