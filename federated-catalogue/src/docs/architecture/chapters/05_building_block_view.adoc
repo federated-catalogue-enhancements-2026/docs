@@ -519,9 +519,113 @@ A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the cre
 
 **Bundle properties.**
 The `properties:` map in `framework.yaml` carries framework-specific runtime values that belong with the bundle rather than with application configuration.
-The Loire example above is the current pattern: the trust-anchor registry URL is intrinsic to the Gaia-X family, so it lives next to the rest of the Gaia-X bundle and travels with it.
 Beans consume properties through `TrustFrameworkRegistry.getBundle(profileId).config().properties()`.
 The map is reserved for the bundle's own beans — the registry itself does not interpret its contents.
+Two subsystems currently consume bundle properties:
+
+[options="header",cols="1,1,3"]
+|===
+| Property key | Consumer | Meaning
+| `trust_anchor_url` | `LoirePolicyEnforcer` | URL of the trust anchor registry used for Loire `x5u` chain validation. Intrinsic to the Gaia-X family.
+| `client_type` | Compliance subsystem | Selects the `TrustFrameworkClient` implementation for external compliance checks (e.g. `gxdch-loire`).
+| `service_url` | Compliance subsystem | Base URL of the external compliance service endpoint.
+| `api_version` | Compliance subsystem | API version hint passed to the client implementation.
+|===
+
+[[_compliance_check_subsystem]]
+===== Compliance Check Subsystem
+
+The compliance check subsystem allows the catalogue to delegate a formal compliance check for a submitted asset to the trust framework's own external service.
+The caller submits the asset's raw credential payload and a profile ID; the catalogue resolves the correct client for that profile, invokes the external service, persists the typed outcome, and returns it to the caller.
+
+[mermaid,width=2000]
+....
+classDiagram
+    class TrustFrameworkClient {
+        <<interface>>
+        +clientType() String
+        +check(credential, config) ComplianceCheckOutcome
+    }
+    class TrustFrameworkClientRegistry {
+        <<interface>>
+        +resolve(clientType) TrustFrameworkClient
+    }
+    class TrustFrameworkClientRegistryImpl {
+        -clients : Map~String, TrustFrameworkClient~
+    }
+    class GxdchComplianceClient {
+        +clientType() String
+        +check(credential, config) ComplianceCheckOutcome
+    }
+    class TrustFrameworkProfileConfig {
+        <<record>>
+        +frameworkProfileId : String
+        +familyId : String
+        +clientType : String
+        +serviceUrl : String
+        +apiVersion : String
+        +timeoutSeconds : int
+    }
+    class ComplianceCheckOrchestrator {
+        +check(assetId, profileId, payload) ComplianceCheckOutcome
+    }
+    class ComplianceCheckOutcome {
+        <<sealed interface>>
+        +compliant() boolean
+    }
+    class IssuedAttestation {
+        <<record>>
+        +attestationCredential : String
+        +credentialValidUntil : Instant
+    }
+    class UnverifiableAttestation {
+        <<record>>
+        +failureCategory : FailureCategory
+        +rawAttestation : String
+        +verificationError : String
+    }
+    class ComplianceResultStore {
+        <<interface>>
+        +store(assetId, profileId, familyId, outcome) Long
+        +findByAssetId(assetId, pageable) Page~ValidationResult~
+    }
+    TrustFrameworkClientRegistry <|.. TrustFrameworkClientRegistryImpl
+    TrustFrameworkClient <|.. GxdchComplianceClient
+    TrustFrameworkClientRegistryImpl --> TrustFrameworkClient : resolves by clientType
+    ComplianceCheckOrchestrator --> TrustFrameworkRegistry : resolves TrustFrameworkProfileConfig
+    ComplianceCheckOrchestrator --> TrustFrameworkService : checks family enabled
+    ComplianceCheckOrchestrator --> TrustFrameworkClientRegistry : resolves client
+    ComplianceCheckOrchestrator --> TrustFrameworkClient : delegates check(credential, config)
+    TrustFrameworkClient --> TrustFrameworkProfileConfig : reads endpoint + timeout
+    ComplianceCheckOutcome <|.. IssuedAttestation
+    ComplianceCheckOutcome <|.. UnverifiableAttestation
+....
+
+**`TrustFrameworkClient`** is the SPI for compliance check implementations.
+Each implementation declares a `clientType()` string that must match the `client_type` property in the trust framework bundle.
+Implementations are registered as Spring beans; `TrustFrameworkClientRegistryImpl` collects them at startup and resolves them by type string at check time.
+Adding support for a new compliance service means adding a new `TrustFrameworkClient` bean — no changes to the orchestration layer.
+
+**`ComplianceCheckOrchestrator`** is the single entry point for the check flow.
+It resolves the `TrustFrameworkProfileConfig` from `TrustFrameworkRegistry.getProfileConfig(profileId)`, guards against disabled families (`ConflictException`), dispatches to the matching client, and maps transport failures to typed HTTP exceptions: `TimeoutException` (→ 504) and `ServiceUnavailableException` (→ 503).
+Unknown profile IDs and unknown client types both produce a `ClientException` (→ 400).
+MDC keys `assetId` and `frameworkProfileId` are set for the duration of the call so all log lines from this thread — including nested RestTemplate calls — carry asset and profile context automatically.
+
+**`GxdchComplianceClient`** is the first concrete client implementation (client type `gxdch-loire`).
+It submits the credential payload to the GXDCH Loire compliance service, then attempts to verify the returned attestation JWT locally via DID resolution and signature verification.
+A successfully verified attestation produces `IssuedAttestation`; a service response that cannot be locally verified produces `UnverifiableAttestation` — this is a first-class outcome, not an error, since the external service did respond with a credential.
+
+**`ComplianceCheckOutcome`** is a sealed interface with two permitted subtypes.
+`IssuedAttestation` (positive — `compliant() == true`) carries the raw attestation credential JWT and its expiry.
+`UnverifiableAttestation` (negative or unverifiable — `compliant() == false`) carries a `FailureCategory` enum value and a human-readable description.
+Callers use an exhaustive `switch` expression to dispatch on the concrete type.
+
+**`ComplianceResultStore`** persists each outcome as a `ValidationResult` record with `validatorType=TRUST_FRAMEWORK`.
+Results are readable per asset via `GET /assets/{id}/compliance-checks` (paginated).
+
+**`mock-2026` bundle:**
+A minimal test bundle (`client_type: gxdch-loire`, `service_url: http://localhost`) is bundled for local development and integration tests.
+Its family is disabled by default (`enabled=false` in the DB seed); enable it via a fixture or `docker-compose.override.yml` and point `service_url` at a WireMock container.
 
 [[_protected_namespace_filter]]
 ===== Protected Namespace Filter
