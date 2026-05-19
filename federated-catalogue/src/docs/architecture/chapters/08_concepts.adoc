@@ -33,7 +33,7 @@ As default, all components should log to Standard out. Log aggregation is realiz
 
 === Trust Framework Bundles
 
-Each supported trust framework is delivered as a self-contained classpath bundle (`framework.yaml` + ontology + SHACL shapes) under `trustframeworks/<bundle-id>/`.
+Each supported trust framework is delivered as a self-contained bundle (`framework.yaml` + ontology + SHACL shapes), either packaged with the JAR or supplied at deployment time as a filesystem directory, under `trustframeworks/<bundle-id>/`.
 A `TrustFrameworkRegistry` bean indexes all bundles at boot and resolves credential subject types to bundle-defined roles, replacing the previous hardcoded URI-to-enum mapping.
 See ADR 10 for the design rationale and <<_trust_framework_bundles_and_role_resolution,Building Block View — Trust Framework Bundles and Role Resolution>> for the runtime structure.
 
@@ -75,6 +75,25 @@ The resulting list is short by design (typically three to ten entries) and stabl
 
 When the conformity body is silent on such a class — no validation component, no criteria document, no test payload — the safe default is a defensive mapping: route the class to the most semantically adjacent existing role via `additional_roots` so credentials of that type, if they ever appear, land somewhere rather than being rejected.
 Document the mapping inline with a pointer to what would un-block dropping it (typically: confirmation from the conformity body that the class is never issued at the top level).
+
+==== Deploying Bundle Overlays
+
+A bundle overlay lets operators customise an existing bundle or add a new one at deployment time, without rebuilding the JAR.
+Set `FEDERATED_CATALOGUE_TRUST_FRAMEWORKS_OVERRIDE_PATH` (Spring property: `federated-catalogue.trust-frameworks.override-path`) to a directory mounted read-only into the container.
+The loader expects the layout `<override-path>/<bundle-id>/framework.yaml` (same as the classpath layout), with optional sibling `ontology.ttl` and `shapes.ttl` files.
+
+When the `id` in a filesystem `framework.yaml` matches a classpath bundle, the file is treated as an overlay: it only needs to declare `id` plus the fields to change.
+Nested maps merge recursively (filesystem wins per leaf key); lists and scalars replace wholesale when the overlay supplies them; sibling TTL files are inherited from the classpath bundle when the overlay directory omits them.
+A filesystem entry whose `id` has no classpath match is loaded as a brand-new bundle and must declare all mandatory fields.
+See ADR 10 for the full deep-merge rules.
+
+.Minimal overlay example — override the Trust Anchor URL for the `gaia-x-2511` bundle
+[source,yaml]
+----
+id: gaia-x-2511
+properties:
+  trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
+----
 
 === Admin Configuration Persistence
 

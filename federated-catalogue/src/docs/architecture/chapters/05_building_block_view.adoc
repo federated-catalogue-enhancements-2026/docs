@@ -401,7 +401,8 @@ Format-specific JWT unwrapping is delegated back to the matching `CredentialForm
 
 A trust framework's identity, ontology, and SHACL shapes are packaged together as a **bundle** under `classpath:trustframeworks/<bundle-id>/`.
 The catalogue ships with the `gaia-x-2511` bundle and discovers any additional bundles dropped on the classpath at boot.
-See ADR 10 for the full rationale.
+An optional filesystem override directory (env var `FEDERATED_CATALOGUE_TRUST_FRAMEWORKS_OVERRIDE_PATH`) may be mounted at deployment time; bundles found there are merged onto their classpath counterparts by `id` or registered as new bundles when no classpath match exists.
+See ADR 10 for the full rationale and overlay deep-merge rules.
 
 [options="header",cols="1,3"]
 |===
@@ -412,7 +413,7 @@ See ADR 10 for the full rationale.
 | `properties:` block in `framework.yaml` | Framework-specific runtime values consumed by the bundle's own beans (e.g. `trust_anchor_url` read by `LoirePolicyEnforcer`). Not interpreted by the registry.
 |===
 
-`TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup and constructs a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
+`TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup, and additionally scans the filesystem override directory when `FEDERATED_CATALOGUE_TRUST_FRAMEWORKS_OVERRIDE_PATH` is set, constructing a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
 Bundles that fail to load are logged at WARN and skipped — they do not abort the load of remaining bundles.
 
 `TrustFrameworkRegistry` indexes the loaded bundles and exposes role resolution to the verification pipeline:
@@ -459,7 +460,8 @@ classDiagram
         +UNKNOWN$
     }
     class TrustFrameworkBundleLoader {
-        +loadFromClasspath() List~TrustFrameworkBundle~
+        <<scans classpath + optional filesystem overlay>>
+        +load() List~TrustFrameworkBundle~
     }
     class TrustFrameworkService {
         +isEnabled(family) boolean

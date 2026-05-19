@@ -90,8 +90,11 @@ The identifier must be a valid IRI (see ADR 7).
 |fcmeta:hasMachineReadable
 |RDF property in the protected `fcmeta:` namespace written to the graph DB when an asset link is created. Points from a human-readable asset's IRI to its machine-readable counterpart's IRI.
 
+|Bundle Overlay
+|A `framework.yaml` placed in the trust-framework filesystem override directory that shares an `id` with a classpath bundle. The overlay's fields deep-merge onto the classpath base (see ADR 10), allowing deployment-time customisation of bundle properties without rebuilding the JAR.
+
 |Trust Framework Bundle
-|A self-contained, classpath-loaded unit (`framework.yaml` + `ontology.ttl` + `shapes.ttl`) defining a single trust-framework profile. Discovered at boot under `trustframeworks/<bundle-id>/`. Indexed by `TrustFrameworkRegistry` to drive role resolution. See ADR 10.
+|A self-contained, classpath- or filesystem-loaded unit (`framework.yaml` + `ontology.ttl` + `shapes.ttl`) defining a single trust-framework profile. Discovered at boot under `trustframeworks/<bundle-id>/` (classpath) and/or in the filesystem override directory. Filesystem entries can either overlay a classpath bundle by `id` or introduce a new bundle. Indexed by `TrustFrameworkRegistry` to drive role resolution. See ADR 10.
 
 |Framework Profile (id)
 |Stable identifier of a single trust-framework bundle (e.g. `gaia-x-2511`). Acts as the registry key and the `frameworkProfileId` of every `ResolvedRole` it produces.
