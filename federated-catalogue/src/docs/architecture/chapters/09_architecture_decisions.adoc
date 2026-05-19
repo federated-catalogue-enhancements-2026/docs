@@ -504,7 +504,7 @@ There is no per-role Java result type and no `result_type` declaration in `frame
 **Out of scope for this ADR:**
 
 * JSON Schema validation engine wiring (bundles with `validation_type: json-schema` load but defer until the engine is integrated)
-* A second framework bundle delivered alongside the catalogue — the mechanism exists; only the `gaia-x-2511` bundle ships at present
+* A second framework bundle delivered alongside the catalogue — the mechanism exists; only the current Gaia-X bundle (release-tagged) ships at present
 * A generic type-URI-based query API — the existing role-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different role names can expose them via framework-specific endpoints or a generic type query
 
 **Rationale:**
@@ -551,3 +551,47 @@ Routing on `content_kind` is unambiguous and preserves backward compatibility �
 Overwrite semantics simplify the data model: no partial-merge conflicts, no ordering dependencies between enrichment uploads.
 
 **Related:** ADR 4, ADR 7.
+
+=== ADR 17: Compliance VC Storage — Raw JWT with Selective Field Extraction
+
+**Related:** ADR 10
+
+**Context:** When the catalogue executes a compliance check against an external compliance service (e.g. the Gaia-X Digital Clearing House, client type `gxdch-loire`), the service returns a Compliance VC as a signed JWT.
+The JWT carries framework-specific claims — for Loire v2 these include `labelLevel`, `validatedCriteria`,
+`rulesVersion`, and `proof.verificationMethod` — alongside the standard JWT claim `exp`.
+
+Two storage strategies were considered:
+
+1. **Structured extraction:** Parse the Compliance VC JWT and map known fields to typed columns (`label_level`,
+`validated_criteria`, …).
+Efficient for filtered queries; requires a schema migration and a new extractor for every trust framework that issues compliance credentials with a different structure.
+
+2. **Raw JWT + minimal extraction (chosen):** Persist the Compliance VC JWT unchanged in `IssuedAttestation.rawCredential`.
+Extract only the `exp` claim to `credentialValidUntil`.
+Consumers that need framework-specific semantics decode the raw JWT themselves.
+
+**Decision:** Option 2 — store the full Compliance VC JWT verbatim; extract only `exp` → `credentialValidUntil`.
+
+**Rationale:**
+
+* The catalogue is designed to support multiple trust frameworks.
+Each framework's compliance credential has a different schema; structurally extracting Loire-specific fields would couple the core storage model to a single framework's vocabulary.
+* `exp` (mapped to `credentialValidUntil`) is the only field with cross-framework operational meaning for the catalogue's validity lifecycle tracking.
+All other fields are framework-specific and belong to the consumer, not the catalogue core.
+* The raw JWT is a self-contained, verifiable artifact — consumers receive exactly what the compliance service signed, with no information loss.
+* Adding a second framework's compliance credentials requires no schema migration and no new extractor.
+
+**Loire-specific fields not extracted:**
+`labelLevel`, `validatedCriteria`, `rulesVersion`, `proof.verificationMethod`.
+These are accessible via the `rawCredential` field by any consumer that needs them.
+
+**Danube v3 migration path.**
+Gaia-X Danube (v3) is not retro-compatible with Loire v2 (stated explicitly in the GXDCH project README).
+Because the client type and bundle id are the only framework-specific identifiers in the compliance check path (see ADR 10), the migration does not touch the core storage model:
+
+* A new client type (e.g. `gxdch-danube`) is registered in the `TrustFrameworkClient` SPI.
+* A new framework bundle (e.g. `gaia-x-YYMM`) is added under `trustframeworks/`, declaring the new client type in its
+`properties:` block.
+* The `rawCredential` storage contract is unchanged — the Danube Compliance VC JWT is persisted the same way.
+
+No changes to `IssuedAttestation`, no schema migration, and no changes to any existing Loire code are required.

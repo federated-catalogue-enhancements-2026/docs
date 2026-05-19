@@ -87,13 +87,57 @@ Nested maps merge recursively (filesystem wins per leaf key); lists and scalars 
 A filesystem entry whose `id` has no classpath match is loaded as a brand-new bundle and must declare all mandatory fields.
 See ADR 10 for the full deep-merge rules.
 
-.Minimal overlay example — override the Trust Anchor URL for the `gaia-x-2511` bundle
+.Minimal overlay example — override the Trust Anchor URL for the Gaia-X compliance bundle
 [source,yaml]
 ----
 id: gaia-x-2511
 properties:
   trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
 ----
+
+[[_gxdch_loire_v2_compliance_service]]
+==== Gaia-X Loire v2 Compliance Service
+
+The shipped Gaia-X compliance bundle (currently `gaia-x-2511`, release-tagged) wires the `GxdchComplianceClient` (client type `gxdch-loire`) to the canonical GXDCH HAProxy endpoint:
+
+[source,yaml]
+----
+properties:
+  client_type: gxdch-loire
+  api_version: "v2"
+  service_url: "https://compliance.gaia-x.eu/v2"
+  timeout_seconds: 30
+----
+
+`https://compliance.gaia-x.eu/v2` is a HAProxy front-end that load-balances across eleven certified GXDCH operators.
+No per-operator configuration is required; the HAProxy URL is the single canonical address for Loire v2 compliance checks.
+
+**Request / response shape.**
+The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the GXDCH compliance endpoint (e.g.
+`/v2/api/credential-offers`).
+The endpoint validates the VP against Loire 2511 criteria and returns a Compliance VC JWT signed by the selected operator.
+No authentication header is required — the GXDCH endpoint is publicly accessible.
+
+.Sketch of the exchange (non-normative; see `GxdchComplianceClient` for the authoritative wire shape)
+[source,http]
+----
+POST https://compliance.gaia-x.eu/v2/api/credential-offers/standard-compliance?vcid=<asset-id-from-vp-jwt-id-claim>
+Content-Type: text/plain
+
+<Loire-conformant VP JWT as the raw request body>
+
+HTTP/1.1 200 OK
+Content-Type: text/plain
+
+<Compliance VC JWT as the raw response body>
+----
+
+The returned Compliance VC JWT is persisted as-is in `IssuedAttestation.rawCredential`.
+See ADR 16 for the storage rationale.
+
+**Test coverage.**
+Live GXDCH coverage requires a deployment stage whose signing certificate is reachable via a public `x5u` URL (the Trust Anchor Registry must be able to resolve the chain).
+BDD scenarios tagged `@uses.live-gxdch` are excluded from default CI; they run only in a dedicated Behave profile (`behave --tags=uses.live-gxdch`) against a QA stage with a resolvable certificate chain.
 
 === Admin Configuration Persistence
 
