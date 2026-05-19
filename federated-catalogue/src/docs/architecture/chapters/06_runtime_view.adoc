@@ -175,8 +175,8 @@ sequenceDiagram
 
     User ->> + ParticipantController: POST /participants
     ParticipantController ->> + ParticipantsService: addParticipant (asset)
-    ParticipantsService ->> + VerificationService: verifyParticipantCredential(asset)
-    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
+    ParticipantsService ->> + VerificationService: verifyCredential(asset)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResult
     ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata assetMetadata, CredentialVerificationResult verificationResult)
     AssetStore -->> - ParticipantsService: [Ok, if no exception]
     ParticipantsService ->> + ParticipantDao: create(participant)
@@ -225,10 +225,10 @@ sequenceDiagram
     Keycloak -->> - ParticipantDao: group
     ParticipantDao ->> ParticipantDao: fromGroupRepo(group): Participant
     ParticipantDao -->> - ParticipantsService: Participant
-    ParticipantsService ->> + VerificationService: verifyParticipantCredential(credential)
-    VerificationService -->> - ParticipantsService: CredentialVerificationResultParticipant
+    ParticipantsService ->> + VerificationService: verifyCredential(credential)
+    VerificationService -->> - ParticipantsService: CredentialVerificationResult
     ParticipantsService ->> ParticipantsService: checkUpdates(existing, updated)
-    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultParticipant)
+    ParticipantsService ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
     AssetStore -->> - ParticipantsService: ''
     ParticipantsService --> + ParticipantDao: update(Participant)
@@ -599,7 +599,7 @@ sequenceDiagram
     User ->> + Auth:Authorize(ASSET_CREATE | ADMIN_ALL)
     Auth -->> - User:[OK]
     User ->> + API:POST /assets
-    API ->> + VerificationService:verifyOfferingCredential(credential)
+    API ->> + VerificationService:verifyCredential(credential)
     VerificationService --> VerificationService:[Verify Syntax]
     VerificationService --> VerificationService:[Verify Semantic]
     VerificationService --> VerificationService:[Extract Credential Type]
@@ -616,7 +616,7 @@ sequenceDiagram
     alt credential.type != Participant
         API -->> User: [Error. Use Participant API]
     else credential.type == Offering
-        API ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResultOffering)
+        API ->> + AssetStore: storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: For details see Diagram <br /> "Store Credentials to <br /> the Asset Store"
         AssetStore -->> - API: [Ok, if no exception]
         API -->> - User:[Asset Meta]
@@ -686,7 +686,7 @@ sequenceDiagram
     Auth -->> - User:OK
     User ->> + API:PUT /assets/{id}[?changeComment=...]
     API ->> API:Check[path id == credential body IRI - else 400]
-    API ->> + VerificationService:verifyOfferingCredential(credential)
+    API ->> + VerificationService:verifyCredential(credential)
     VerificationService -->> - API:CredentialVerificationResult
     API ->> + AssetStore:storeCredential(AssetMetadata, CredentialVerificationResult)
     Note right of AssetStore: In-place UPDATE - Envers records previous state in assets_aud
@@ -1315,9 +1315,16 @@ sequenceDiagram
 The verification of credentials consists of up to four stages, each independently configurable (see <<_verification_profiles>>).
 Besides verifying the credential, additional tasks are executed (e.g., format detection, parsing, claim extraction).
 
-`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates all verification and claim extraction logic to a `VerificationStrategy` (currently `CredentialVerificationStrategy`). The strategy contains the full format detection, VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected namespace filtering logic. If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`. See <<_verification_strategy_pattern>> for details.
+`VerificationServiceImpl` acts as a thin Context in the Strategy pattern: it resolves per-request verification toggles and delegates payload processing to one of two `RdfIngestionStrategy` implementations — `CredentialVerificationStrategy` for recognised credentials (and ambiguous JWTs, which it rejects explicitly), `NonCredentialIngestionStrategy` for non-credential RDF payloads.
+The credential strategy contains the full VP/VC parsing, semantic validation, schema validation, signature verification, claim extraction, and protected-namespace filtering logic.
+If any triples referencing the `fcmeta:` namespace are filtered, a user-visible warning is included in the `CredentialVerificationResult`.
+See <<_verification_strategy_pattern>> for details.
 
-**Format detection** is always active. The `FormatDetector` classifies the incoming credential as either Loire (JWT per ICAM v24.07) or generic VC 2.0. Credentials without a VC 2.0 context URI are rejected. For JWT credentials, the `JwtContentPreprocessor` unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_format_detection>>.
+**Format detection** is always active. `CredentialFormatDetector` iterates an ordered chain of `CredentialFormatProcessor` beans — `LoireCredentialProcessor` (`@Order(1)`), `Vc2DanubeTechCredentialProcessor` (`@Order(3)`) — and returns the first non-`UNKNOWN` classification.
+Loire-specific policy enforcement (`did:web` restriction, `x5u` trust-chain validation) is delegated to `LoirePolicyEnforcer`, which is the bean that consults `TrustFrameworkService.isEnabled("gaia-x")` and applies its rules only when the family is enabled.
+Credentials without a VC 2.0 context URI are rejected.
+For JWT credentials, the `JwtContentPreprocessor` unwraps the JWT envelope to produce JSON-LD for downstream processing.
+See <<_format_detection>>.
 
 **Syntactic validation** is always active. The credential is parsed as JSON-LD and validated against the Verifiable Credential data model. Any syntactic issue will raise an error here. For JWT credentials, parsing occurs after JWT unwrapping.
 
@@ -1325,7 +1332,9 @@ Besides verifying the credential, additional tasks are executed (e.g., format de
 
 **Schema validation** (when enabled) checks the uploaded credentials against a composite schema of type SHACL.
 If a credential does not conform to the composite schema, a verification exception is thrown with a message containing the validation report. In that case, the verification process does not proceed, and claims are not extracted.
-Automatic schema validation against stored SHACL shapes is **disabled by default in the upload verification flow** and is gated by `federated-catalogue.verification.schema`. When enabled, upload verification still routes through `SchemaValidationService` (see <<_schema_validation_service>>). On-demand validation of stored assets — covering SHACL, JSON Schema, and XML Schema — is provided by the dedicated `AssetValidationService` (see <<_on_demand_asset_validation>>); both flows evaluate SHACL via the same TopBraid SHACL engine.
+Automatic schema validation against stored SHACL shapes is **disabled by default in the upload verification flow** and is gated by `federated-catalogue.verification.schema`.
+When enabled, upload verification still routes through `SchemaValidationService` (see <<_schema_validation_service>>).
+On-demand validation of stored assets — covering SHACL, JSON Schema, and XML Schema — is provided by the dedicated `AssetValidationService` (see <<_on_demand_asset_validation>>); both flows evaluate SHACL via the same TopBraid SHACL engine.
 
 NOTE: For backward compatibility, automatic schema validation during upload can be re-enabled via the configuration property `federated-catalogue.verification.schema=true`.
 
