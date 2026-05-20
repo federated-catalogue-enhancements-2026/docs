@@ -357,13 +357,13 @@ Fixes DSO immediately but deepens every structural problem above.
 2. **SHACL-driven discovery, retain enum:** Replace hardcoded URIs with runtime discovery; keep `TrustFrameworkBaseClass` enum as the routing label.
 Fixes DSO and enables new frameworks via config, but the fixed enum still couples the API and storage schema to Gaia-X concepts.
 
-3. **Bundle-per-framework with explicit role declarations (chosen):** Each trust framework is a self-contained classpath bundle (ontology + SHACL + a YAML config that declares the framework's roles).
+3. **Bundle-per-framework with explicit role declarations (chosen):** Each trust framework is a self-contained bundle (ontology + SHACL + a YAML config that declares the framework's roles), packaged with the JAR or supplied at deployment time as a filesystem directory.
 At startup the catalogue loads all bundles, builds a `<typeUri> → <ResolvedRole>` index by walking each declared role's subclass closure, and routes credentials by role string.
 No trust-framework concept exists in Java source — only in the bundle configs.
 
 **Decision:** Option 3 — bundle-per-framework with explicit role declarations and dynamic subclass-closure indexing.
 
-**Bundle layout (classpath resources):**
+**Bundle layout:**
 
 ----
 trustframeworks/
@@ -373,7 +373,12 @@ trustframeworks/
     shapes.ttl          # SHACL shapes (optional for non-SHACL bundles)
 ----
 
-The `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at boot.
+Bundles ship from two sources:
+
+* **Classpath** (`classpath:trustframeworks/*/framework.yaml`): bundles packaged in the JAR; scanned first.
+* **Filesystem overlay directory** (optional, configured via `FEDERATED_CATALOGUE_TRUST_FRAMEWORKS_OVERRIDE_PATH`): a runtime-configurable directory whose subdirectories follow the same `<bundle-id>/framework.yaml` layout.
+When set, the loader scans it after the classpath and merges its entries into the classpath result.
+
 A bundle that fails to load is logged at WARN and skipped — it does not abort loading of remaining bundles.
 
 **`framework.yaml` format:**
@@ -398,6 +403,34 @@ roles:
     types: [ ]
 
 properties: { }                          # framework-specific metadata (reserved)
+----
+
+**Deployment-time overlays:**
+
+The filesystem overlay directory exists to customise bundle properties — most commonly the URL of an external service the bundle calls, such as `properties.trust_anchor_url` — without rebuilding the JAR.
+It also allows new bundles to be added at deployment time for environments that need them.
+
+Resolution rule for filesystem entries:
+
+* The filesystem `framework.yaml` is parsed for its `id` field first.
+If `id` is missing or blank the entry is skipped with a warning.
+* If `id` matches a classpath bundle, the filesystem entry is treated as an **overlay**: it is deep-merged onto the classpath base.
+The filesystem file therefore only needs to declare `id` plus the fields it changes.
+* If `id` is new (no classpath match), the entry is treated as a **new bundle** and must declare all mandatory fields (`id`, `family`, `namespace`, `validation_type`, `roles`).
+
+Merge semantics for overlays:
+
+* Nested maps (e.g. `properties:`, `roles:`) merge recursively; the filesystem value wins at each leaf key.
+* Lists (e.g. `additional_roots`, `types`) and scalars (e.g. `namespace`, `validation_type`) replace wholesale when the filesystem provides them.
+* Sibling files (`ontology.ttl`, `shapes.ttl`) are inherited from the classpath bundle when the overlay directory does not ship its own.
+
+Minimal overlay example — redirect the Gaia-X bundle's trust anchor URL to an in-cluster service without copying the rest of the bundle:
+
+[source,yaml]
+----
+id: gaia-x-2511
+properties:
+  trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
 ----
 
 **Role declaration is a manual, per-framework curation step — not auto-derivable.**
@@ -458,7 +491,7 @@ It is independent of role resolution: any credential whose subject type URI is r
 **Multi-framework side-by-side:** Multiple bundles load simultaneously.
 Namespaces are disjoint by construction; resolution is unambiguous.
 A VP containing credentials from different frameworks routes each credential through its own bundle's role.
-Adding a new framework is a classpath-resource change — drop a new `trustframeworks/<bundle-id>/` directory containing `framework.yaml` plus the ontology/SHACL files; no Java changes.
+Adding a new framework is a bundle drop-in — either as a classpath resource baked into a custom JAR or as a directory under the deployment-time overlay path, in both cases containing `framework.yaml` plus the ontology/SHACL files; no Java changes.
 
 **Removed configuration:** the `federated-catalogue.verification.{participant,resource,service-offering}.type` properties (and the `service-offering.additional-types` workaround) are no longer read.
 Type URIs are now declared exclusively in each bundle's `framework.yaml`.
