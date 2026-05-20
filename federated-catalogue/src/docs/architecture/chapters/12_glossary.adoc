@@ -123,4 +123,16 @@ The identifier must be a valid IRI (see ADR 7).
 |Bundle Properties
 |Free-form `properties:` map declared in a bundle's `framework.yaml`, carrying framework-specific runtime values consumed by that bundle's own beans (e.g. `trust_anchor_url` read by `LoirePolicyEnforcer`). Not interpreted by the `TrustFrameworkRegistry`.
 
+|Schema Module
+|One of the four runtime-toggleable schema languages exposed on the admin schema-modules page: `SHACL`, `JSON_SCHEMA`, `XML_SCHEMA`, `OWL`. Each toggle persists to the `admin_config` table under `schema.module.<MODULE>.enabled`. Validators (SHACL, JSON Schema, XML Schema) gate the corresponding validator at on-demand validation and credential verification; the OWL toggle gates the runtime composite-ontology subclass walk in role resolution. See ADR 16.
+
+|OWL Module Toggle
+|The admin toggle that gates the `rdfs:subClassOf+` walk over runtime-uploaded ontologies during role resolution. When off, the catalogue resolves only types reachable through the registry index and `additional_roots`; credentials whose type relies on a runtime-uploaded ontology fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request`. Registry-direct types keep resolving. See ADR 16.
+
+|Subclass Walk
+|The third tier of role resolution: a SPARQL `rdfs:subClassOf+` traversal performed by `ClaimValidator.resolveSubjectRole` against the runtime composite ontology, run only when the registry index and `additional_roots` (tiers 1 and 2) do not recognise a credential's type. Gated by the OWL schema-module toggle (see ADR 16).
+
+|Composite Ontology
+|The in-memory Jena `OntModel` formed by union of every `ONTOLOGY`-type schema row currently stored in the catalogue. Cached process-wide by `SchemaStoreImpl.COMPOSITE_SCHEMAS` and invalidated on schema add/update/delete/clear. Consumed by the subclass walk during role resolution and by the on-demand validation endpoint when returning the composite SHAPE graph.
+
 |===
