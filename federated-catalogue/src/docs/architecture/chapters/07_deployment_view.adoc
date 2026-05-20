@@ -60,3 +60,9 @@ Replace `<portal-origin>` with your portal URL (e.g., `http://localhost:8088` fo
 ==== Admin Console URL
 
 The demo portal auto-derives the Admin Console URL from `keycloak.auth-server-url` and `keycloak.realm` (aliased as `admin.dashboard.keycloak-auth-server-url` / `admin.dashboard.keycloak-realm`). Override with `KEYCLOAK_ADMIN_CONSOLE_URL` (or `admin.dashboard.keycloak-admin-console-url`) if Keycloak is behind a different hostname.
+
+=== Runtime Admin Configuration
+
+Most catalogue features that an operator can flip at runtime are persisted in the `admin_config` PostgreSQL table — including the four schema-module toggles (`schema.module.SHACL.enabled`, `schema.module.JSON_SCHEMA.enabled`, `schema.module.XML_SCHEMA.enabled`, `schema.module.OWL.enabled`) and the per-framework enabled flag in `trust_frameworks`. Values written through the admin endpoints survive restarts; no new environment variables are introduced by this layer.
+
+`federated-catalogue.verification.schema` (start-up boolean) and the four `schema.module.*.enabled` rows (admin-controlled booleans) operate at different layers. The start-up flag selects whether SHACL is consulted at all during credential upload; the admin module toggles then gate the corresponding validator wherever it would otherwise run. See ADR 16 for the toggle semantics, including the asymmetric role of the OWL toggle.
