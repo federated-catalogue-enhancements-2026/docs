@@ -98,26 +98,31 @@ properties:
 [[_gxdch_loire_v2_compliance_service]]
 ==== Gaia-X Loire v2 Compliance Service
 
-The shipped Gaia-X compliance bundle (currently `gaia-x-2511`, release-tagged) wires the `GxdchComplianceClient` (client type `gxdch-loire`) to the canonical GXDCH HAProxy endpoint:
+The shipped Gaia-X compliance bundle (currently `gaia-x-2511`, release-tagged) wires the generic `JwtVcComplianceClient` (client type `jwt-vc-compliance`) to the canonical GXDCH HAProxy endpoint:
 
 [source,yaml]
 ----
 properties:
-  client_type: gxdch-loire
+  client_type: jwt-vc-compliance
   api_version: "v2"
   service_url: "https://compliance.gaia-x.eu/v2"
+  compliance_path: "/api/credential-offers/standard-compliance"
   timeout_seconds: 30
 ----
+
+The client implementation is wire-shape-specific (POST a VP JWT, expect a VC JWT) but path-agnostic; the endpoint path is declared per bundle.
+This keeps the Gaia-X Loire / GXDCH endpoint as the reference deployment while allowing any future framework that adopts the same exchange to onboard as a new bundle, no new Java code required.
+See ADR 12 for the wire-shape-in-bundle rationale.
 
 `https://compliance.gaia-x.eu/v2` is a HAProxy front-end that load-balances across the certified GXDCH operators.
 No per-operator configuration is required; the HAProxy URL is the single canonical address for Loire v2 compliance checks.
 
 **Request / response shape.**
-The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the GXDCH `standard-compliance` endpoint under `/v2/api/credential-offers/standard-compliance` (see sketch below for the exact path including the required `vcid` query parameter).
+The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the configured `compliance_path` (in the Gaia-X bundle: `/api/credential-offers/standard-compliance`) appended to `service_url`, with a `vcid` query parameter carrying the VP JWT's `id` claim.
 The endpoint validates the VP against Loire 2511 criteria and returns a Compliance VC JWT signed by the selected operator.
 No authentication header is required — the GXDCH endpoint is publicly accessible.
 
-.Sketch of the exchange (non-normative; see `GxdchComplianceClient` for the authoritative wire shape)
+.Sketch of the exchange (non-normative; see `JwtVcComplianceClient` for the authoritative wire shape)
 [source,http]
 ----
 POST https://compliance.gaia-x.eu/v2/api/credential-offers/standard-compliance?vcid=<asset-id-from-vp-jwt-id-claim>

@@ -556,7 +556,7 @@ Overwrite semantics simplify the data model: no partial-merge conflicts, no orde
 
 **Related:** ADR 10
 
-**Context:** When the catalogue executes a compliance check against an external compliance service (e.g. the Gaia-X Digital Clearing House, client type `gxdch-loire`), the service returns a Compliance VC as a signed JWT.
+**Context:** When the catalogue executes a compliance check against an external compliance service (e.g. the Gaia-X Digital Clearing House, served by the generic REST + JWT-VC compliance client `JwtVcComplianceClient` / client type `jwt-vc-compliance`), the service returns a Compliance VC as a signed JWT.
 The JWT carries framework-specific claims — for Loire v2 these include `labelLevel`, `validatedCriteria`,
 `rulesVersion`, and `proof.verificationMethod` — alongside the standard JWT claim `exp`.
 
@@ -589,9 +589,8 @@ These are accessible via the `rawCredential` field by any consumer that needs th
 Gaia-X Danube (v3) is not retro-compatible with Loire v2 (stated explicitly in the GXDCH project README).
 Because the client type and bundle id are the only framework-specific identifiers in the compliance check path (see ADR 10), the migration does not touch the core storage model:
 
-* A new client type (e.g. `gxdch-danube`) is registered in the `TrustFrameworkClient` SPI.
-* A new framework bundle (e.g. `gaia-x-YYMM`) is added under `trustframeworks/`, declaring the new client type in its
-`properties:` block.
+* If Danube preserves the REST + JWT-VC exchange shape, the existing `jwt-vc-compliance` client is reused with a new bundle whose `compliance_path` and `service_url` point at the Danube endpoint.
+* Otherwise, a new client type (e.g. `gxdch-danube`) is registered in the `TrustFrameworkClient` SPI and declared in the new framework bundle's `properties:` block.
 * The `rawCredential` storage contract is unchanged — the Danube Compliance VC JWT is persisted the same way.
 
 No changes to `IssuedAttestation`, no schema migration, and no changes to any existing Loire code are required.
