@@ -83,17 +83,27 @@ For Verifiable Credentials, this is the `credentialSubject` IRI.
 For non-credential RDF assets, this is the IRI extracted from the RDF content (e.g., `@id`).
 The returned IRI can then be used as a filter for the assets endpoint to download the originating asset file.
 
-The graph database backend is **pluggable**. The implementation is selected via the `graphstore.impl` configuration property:
+The graph database backend is **pluggable**. Three adapters are available:
 
 [options="header",cols="1,2,2"]
 |===
-| Value | Backend | Query Language
-| `neo4j` | Neo4j (default) | openCypher
-| `fuseki` | Apache Jena Fuseki | SPARQL-star
-| `none` | No-op / disabled (default when property is missing) | —
+| Backend | Implementation | Query Language
+| `NEO4J` | Neo4j | openCypher
+| `FUSEKI` | Apache Jena Fuseki | SPARQL-star
+| `NONE` | No-op / disabled | —
 |===
 
-Both backends implement the same `GraphStore` interface. Core services contain no backend-specific logic. The `none` backend is selected automatically when `graphstore.impl` is not set.
+All three adapters are wired unconditionally at boot. A single `RoutingGraphStore` (marked `@Primary`) holds the currently-active adapter behind a volatile reference and delegates every `GraphStore` call to it. Core services contain no backend-specific logic; they depend on `GraphStore` only.
+
+The active backend is resolved on cold boot in the following order:
+
+. `admin_config[graphstore.preferred.backend]` — the persisted preference set by a prior admin switch.
+. `graphstore.impl` configuration property — the deployment-time bootstrap.
+. `NONE` — fallback so the application boots even without a configured graph store.
+
+Per-backend connection URIs (`graphstore.neo4j.uri`, `graphstore.fuseki.uri`) are both read at startup so a switch can target either backend without configuration changes. Each adapter opens a driver lazily on first use, so an unreachable backend at boot does not prevent the application from starting.
+
+Operators change the active backend through the Admin API (see <<_admin_api>>). The change takes effect in process on the next call — no JVM restart.
 
 ===== Neo4j backend
 
@@ -846,7 +856,9 @@ The JWT is extracted from the `data:` URL by stripping the media type prefix. Th
 
 The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from credentials) and adds them to the graph database. The Graph Database only contains claims from active credentials and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database. Additionally, the interface provides health-check and claim-count methods used by the Spring Boot health indicator and the startup auto-rebuild mechanism.
 
-A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`).
+All consumers depend on a single `GraphStore` bean: `RoutingGraphStore` (marked `@Primary`). It delegates every method to the currently-active adapter, held behind a `volatile` reference. The admin "Switch Backend" action calls a synchronized `setActive(GraphBackendType)` method on the routing store, so subsequent reads observe the new backend immediately without a restart. Each backend adapter (Neo4j, Fuseki) opens its driver lazily on first use; this keeps the application bootable when an inactive backend is unreachable.
+
+A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`). After an admin backend switch, the same rebuild path repopulates the newly-active store from the metadata store.
 
 Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active credentials into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
 
@@ -1728,7 +1740,7 @@ Five delegate services in `fc-service-server` implement the admin endpoints, eac
 | `AdminDashboardService` | `AdminApiDelegate` | `GET /admin/me` (access check), `GET /admin/stats` (metrics), `GET /admin/health` (component health), `GET /admin/keycloak-url`
 | `TrustFrameworkAdminService` | `TrustFrameworkAdminApiDelegate` | List, toggle, and update trust frameworks; checks live connectivity per framework on list
 | `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts; toggle each module on/off; expose the per-ontology subclass contribution to each registered role for the OWL module. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService` and return `400 module_disabled:<MODULE>` when off; in upload verification only SHACL is consulted, with the same error contract. The OWL toggle gates the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveRole` (see ADR 16)
-| `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
+| `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | `GET /admin/graph-database` returns the active backend, connection state, claim count, and a `rebuildNeeded` flag with the `rdfAssetCount` that a rebuild would re-index. `POST /admin/graph-database/switch` pre-flights the target backend via `GraphStoreProbe` (Bolt for Neo4j, HTTP for Fuseki), persists the choice to `admin_config[graphstore.preferred.backend]`, and performs the live in-process swap via `RoutingGraphStore.setActive(...)` — the change is observable on the next call with no JVM restart. An unreachable target is rejected with `400 Bad Request` before either side effect runs.
 |===
 
 These components in `fc-service-core` read admin-controlled settings during normal catalogue operations:
@@ -1740,8 +1752,6 @@ These components in `fc-service-core` read admin-controlled settings during norm
 | `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the request is rejected with `ClientException` → `400 Bad Request`, body `module_disabled:<MODULE>` (see ADR 16).
 | `CredentialVerificationStrategy` | Credential verification | Reads SHACL and OWL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns the same `400 module_disabled:SHACL` contract on requests with `verifySchema=true`. Disabling OWL bypasses the runtime composite-ontology subclass walk in `resolveRole`; credentials whose type is only reachable through that walk fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request` (see ADR 16). JSON Schema and XML Schema toggles do not bite on this path today — every credential is JSON-LD or JWT-wrapped JSON-LD and routes to SHACL. The Gaia-X enabled flag is consulted via `TrustFrameworkService`.
 |===
-
-NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
 
 The `trust_frameworks` and `admin_config` tables that back this configuration layer are documented under <<section-concepts,Cross-cutting Concepts — Admin Configuration Persistence>>.
 

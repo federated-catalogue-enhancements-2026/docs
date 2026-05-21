@@ -587,3 +587,26 @@ Re-sweeping the backlog of chunks skipped while SHACL was off (re-queueing them 
 
 * On-demand validation (`POST /assets/validate`) rejects with `400 Bad Request` not only for `module_disabled:<MODULE>` but also for the broader "no validation module is enabled or applicable" case.
 Both are administrative-configuration mismatches under operator control, not server-side processing failures, so `ClientException` (400) is the appropriate mapping rather than `VerificationException` (422). 422 remains reserved for assets whose type is not validatable at all (not RDF, unsupported content type).
+
+=== ADR 17: Live in-process graph backend switching
+
+**Context:** The catalogue supports three graph-store backends (Neo4j, Fuseki, no-op) behind a common `GraphStore` interface. Operators need to change the active backend at runtime — for example, to move from Neo4j to Fuseki without scheduling a maintenance window — and the choice must survive a restart. A purely configuration-driven model (one adapter wired per profile, change requires editing config and restarting) makes the switch operator-hostile and couples the change to deployment tooling. Wiring all adapters and selecting one at request time keeps the switch self-service, but the choice must still be persistent and the system must not become unbootable if the operator picks a backend that is currently unreachable.
+
+**Decision:** All three adapters are wired unconditionally at boot. A single `RoutingGraphStore` (`@Primary`) holds the currently-active adapter behind a `volatile` reference and delegates every `GraphStore` call to it. Switching is exposed as `POST /admin/graph-database/switch`:
+
+. The target backend is pre-flighted by `GraphStoreProbe` — a Bolt `verifyConnectivity()` against `graphstore.neo4j.uri` for Neo4j, an HTTP GET against `graphstore.fuseki.uri` for Fuseki. An unreachable target is rejected with `400 Bad Request` and no state changes.
+. On a successful probe, the choice is persisted to `admin_config[graphstore.preferred.backend]`, and `RoutingGraphStore.setActive(...)` (synchronized) updates the volatile reference. Subsequent calls observe the new adapter immediately.
+
+On cold boot the active backend is resolved as: persisted preference → `graphstore.impl` property → `NONE`. Each adapter opens its driver lazily on first use, so an unreachable inactive backend does not block startup.
+
+The runtime status endpoint (`GET /admin/graph-database`) reports the active backend, connectivity, claim count, and a `rebuildNeeded` flag with `rdfAssetCount`. The flag is true when the active store holds no claims but active RDF assets exist in storage — the typical state after a backend switch — and points the operator to the existing `POST /admin/graph/rebuild` endpoint, which repopulates the active backend from the metadata store.
+
+**Consequences:**
+
+* Switching backends is a self-service admin action, not a redeployment. The change is atomic from the perspective of any single thread (volatile read sees one adapter or the other), and the persisted preference makes the choice survive a restart without re-touching configuration.
+
+* All adapters are constructed at boot regardless of which one is active, which trades a small amount of bean wiring against the ability to swap without restart. The lazy driver pattern keeps boot resilient: an inactive Neo4j or Fuseki being down is not a startup failure — it is simply not contacted until the operator switches to it.
+
+* The pre-flight probe is the only thing standing between an operator and an unbootable next start: persisting a preference for an unreachable backend would trap the cold-boot resolution path. Rejecting unreachable targets at the API level is therefore mandatory, not advisory.
+
+* A backend switch leaves the new store empty (it has its own claim graph, independent of the previous backend). The `rebuildNeeded` signal in the status response makes this state explicit so the admin UI can surface a single-click rebuild via the existing `GraphRebuildService` path. No data is migrated between backends — the metadata store is the source of truth, and the graph is a derived index per ADR-level discussions of the rebuild contract.
