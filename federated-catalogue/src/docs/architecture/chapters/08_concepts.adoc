@@ -95,6 +95,23 @@ properties:
   trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
 ----
 
+==== Type Dispatch and the OWL Toggle
+
+When a credential arrives, the catalogue maps its `credentialSubject` type URI to a trust-framework role through three tiers, in order:
+
+1. **`TrustFrameworkRegistry.typeIndex`** — a hash lookup populated at boot by walking each bundle's `ontology.ttl` from every declared role down via `rdfs:subClassOf*`. Hits here cover every class statically reachable from a role at startup.
+2. **`additional_roots`** — sibling URIs declared in `framework.yaml` for cases where the ontology's class graph does not connect the sibling to the role (see ADR 10 for the `gx:DigitalServiceOffering` example). Also indexed at boot.
+3. **Composite-ontology subclass walk** — `ClaimValidator.resolveSubjectRole` runs a SPARQL `rdfs:subClassOf+` query against the runtime composite ontology assembled from `ONTOLOGY`-type schema rows. This is the only tier that consults schemas uploaded *after* boot.
+
+The OWL administrative toggle (ADR 16) controls whether the catalogue admits **runtime extensions** to its registered type vocabulary.
+With OWL on, custom subclasses introduced through runtime-uploaded ontologies are recognised and routed to the registered role they extend.
+With OWL off, the catalogue accepts only the types statically known at boot — credentials whose type was introduced via a runtime ontology upload are rejected at the verification entry point with `400 Bad Request`.
+Tiers 1 and 2 continue to run in either state; only tier 3 (the subclass walk over the runtime composite ontology) is gated.
+The admin UI labels the toggle accordingly, so operators see the user-facing effect rather than the implementation tier it gates.
+
+Disabling OWL therefore has a *narrow* but *strict* effect: framework-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) keep resolving and keep being accepted; custom subclasses defined exclusively in a runtime-uploaded ontology stop resolving and are rejected.
+Gating role resolution is the most visible effect a toggle on a type-vocabulary input can have, and the one that satisfies the demonstrable-effect requirement for runtime toggles.
+
 [[_gxdch_loire_v2_compliance_service]]
 ==== Gaia-X Loire v2 Compliance Service
 

@@ -552,6 +552,42 @@ Overwrite semantics simplify the data model: no partial-merge conflicts, no orde
 
 **Related:** ADR 4, ADR 7.
 
+=== ADR 16: Schema-module admin toggles, with OWL gating role resolution
+
+**Related:** ADR 10.
+
+**Context:** Four schema languages — SHACL, JSON Schema, XML Schema, OWL — must each be enable/disable-able at runtime through the administration UI, and every toggle must have a demonstrable effect.
+
+SHACL, JSON Schema, and XML Schema all fit a uniform validator shape: input runs against stored schemas of the matching type and a conformance verdict is returned.
+OWL is different — uploaded ontologies extend the type vocabulary the role resolver consults via `rdfs:subClassOf+`; OWL has no validation step of its own.
+A uniform `module_disabled` semantic therefore does not fit OWL: without separate semantics, the OWL toggle would persist in the database with no observable effect, which violates the demonstrable-effect requirement.
+
+**Decision:** Expose all four toggles on the admin schema-modules page, but treat them as two semantic classes. The admin UI splits the two classes into separate sections so the asymmetry is visible to operators.
+
+* **Validators (SHACL, JSON Schema, XML Schema):** the toggle gates the validator wherever the catalogue would otherwise run it — on-demand validation, and credential verification when the caller requests a schema check.
+When off, the affected endpoint returns `400 Bad Request` with body `module_disabled:<MODULE>`.
+Schema storage is unaffected; schemas remain queryable through the schema endpoints regardless of toggle state.
+
+* **OWL:** the toggle gates the third tier of role resolution — the `rdfs:subClassOf+` walk over runtime-uploaded ontologies, on top of the registry index and `additional_roots` defined by ADR 10.
+When off, only tiers 1 and 2 are consulted; credentials whose type is only reachable through the subclass walk resolve to `ResolvedRole.UNKNOWN`, and the verification entry point rejects them with `400 Bad Request`.
+Registry-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) are unaffected.
+
+**Consequences:**
+
+* Disabling a validator is *permissive* (a check is skipped); disabling OWL is *restrictive* (the catalogue stops recognising custom subclasses).
+The asymmetry is intentional: gating role resolution is the strongest demonstrable effect for a type-vocabulary input, and a uniform "skip a check" semantic does not exist for OWL.
+
+* The OWL toggle is independent of the caller's `verifySchema` and `verifySemantics` flags.
+Type dispatch is a configuration of the catalogue's type system, not a per-request validation step, so disabling OWL affects every internal caller of the verification path — asset upload, provenance ingest, asset metadata flow, base subscriber, and on-demand role resolution — independent of how those callers parameterise their request.
+
+* The SHACL toggle also gates the periodic revalidation sweep over the existing claims graph.
+When SHACL is administratively disabled, `RevalidationServiceImpl.handleTask` short-circuits — the sweep skips per-asset validation rather than revoke previously-conforming assets against shapes the operator has explicitly silenced.
+The periodic sweep is not actively wired in the default production configuration today; the gate is pre-positioned for when it is.
+Re-sweeping the backlog of chunks skipped while SHACL was off (re-queueing them on the false→true transition) is a follow-up that lands together with production wiring of the sweep — it is a one-liner against `RevalidationService.startValidating()` at that point.
+
+* On-demand validation (`POST /assets/validate`) rejects with `400 Bad Request` not only for `module_disabled:<MODULE>` but also for the broader "no validation module is enabled or applicable" case.
+Both are administrative-configuration mismatches under operator control, not server-side processing failures, so `ClientException` (400) is the appropriate mapping rather than `VerificationException` (422). 422 remains reserved for assets whose type is not validatable at all (not RDF, unsupported content type).
+
 === ADR 17: Compliance VC Storage — Raw JWT with Selective Field Extraction
 
 **Related:** ADR 10
