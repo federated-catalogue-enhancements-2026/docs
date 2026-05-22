@@ -32,25 +32,8 @@ See ADR 10 for overlay deep-merge semantics.
 
 **Activating a Trust Framework Family.**
 Bundled trust-framework families (e.g. `gaia-x`) are registered but disabled by default.
-At startup the catalogue logs one INFO line per disabled family listing both activation paths.
-Two ways to enable a family:
-
-_Option A — Admin API (runtime, persisted):_
-
-[source,http]
-----
-PATCH /admin/trust-frameworks/gaia-x
-Content-Type: application/json
-
-{"enabled": true}
-----
-
-_Option B — Environment variable (deployment-time, applied on every boot):_
-
-[source,shell]
-----
-FEDERATED_CATALOGUE_ENABLED_TRUST_FRAMEWORKS=gaia-x
-----
+A family can be enabled at runtime via the Admin API (persisted) or statically via the `FEDERATED_CATALOGUE_ENABLED_TRUST_FRAMEWORKS` environment variable (applied on every boot).
+Refer to the OpenAPI specification for the exact endpoint contract.
 
 Kubernetesfootnote:[https://kubernetes.io/[Kubernetes]] is the recommended infrastructure for production deployment. For development, Dockerfootnote:[https://www.docker.com/[Docker: Accelerated, Containerized Application Development]] in combination with docker-compose can be used.
 
