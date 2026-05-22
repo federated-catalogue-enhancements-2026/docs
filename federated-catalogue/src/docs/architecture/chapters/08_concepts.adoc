@@ -87,7 +87,7 @@ Nested maps merge recursively (filesystem wins per leaf key); lists and scalars 
 A filesystem entry whose `id` has no classpath match is loaded as a brand-new bundle and must declare all mandatory fields.
 See ADR 10 for the full deep-merge rules.
 
-.Minimal overlay example — override the Trust Anchor URL for the `gaia-x-2511` bundle
+.Minimal overlay example — override the Trust Anchor URL for the Gaia-X compliance bundle
 [source,yaml]
 ----
 id: gaia-x-2511
@@ -111,6 +111,54 @@ The admin UI labels the toggle accordingly, so operators see the user-facing eff
 
 Disabling OWL therefore has a *narrow* but *strict* effect: framework-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) keep resolving and keep being accepted; custom subclasses defined exclusively in a runtime-uploaded ontology stop resolving and are rejected.
 Gating role resolution is the most visible effect a toggle on a type-vocabulary input can have, and the one that satisfies the demonstrable-effect requirement for runtime toggles.
+
+[[_gxdch_loire_v2_compliance_service]]
+==== Gaia-X Loire v2 Compliance Service
+
+The shipped Gaia-X compliance bundle (currently `gaia-x-2511`, release-tagged) wires the generic `JwtVcComplianceClient` (client type `jwt-vc-compliance`) to the canonical GXDCH HAProxy endpoint:
+
+[source,yaml]
+----
+properties:
+  client_type: jwt-vc-compliance
+  api_version: "v2"
+  service_url: "https://compliance.gaia-x.eu/v2"
+  compliance_path: "/api/credential-offers/standard-compliance"
+  timeout_seconds: 30
+----
+
+The client implementation is wire-shape-specific (POST a VP JWT, expect a VC JWT) but path-agnostic; the endpoint path is declared per bundle.
+This keeps the Gaia-X Loire / GXDCH endpoint as the reference deployment while allowing any future framework that adopts the same exchange to onboard as a new bundle, no new Java code required.
+See ADR 12 for the wire-shape-in-bundle rationale.
+
+`https://compliance.gaia-x.eu/v2` is a HAProxy front-end that load-balances across the certified GXDCH operators.
+No per-operator configuration is required; the HAProxy URL is the single canonical address for Loire v2 compliance checks.
+
+**Request / response shape.**
+The catalogue POSTs a Loire-conformant Verifiable Presentation JWT to the configured `compliance_path` (in the Gaia-X bundle: `/api/credential-offers/standard-compliance`) appended to `service_url`, with a `vcid` query parameter carrying the VP JWT's `id` claim.
+The endpoint validates the VP against Loire 2511 criteria and returns a Compliance VC JWT signed by the selected operator.
+No authentication header is required — the GXDCH endpoint is publicly accessible.
+
+.Sketch of the exchange (non-normative; see `JwtVcComplianceClient` for the authoritative wire shape)
+[source,http]
+----
+POST https://compliance.gaia-x.eu/v2/api/credential-offers/standard-compliance?vcid=<asset-id-from-vp-jwt-id-claim>
+Content-Type: text/plain
+
+<Loire-conformant VP JWT as the raw request body>
+
+HTTP/1.1 201 Created
+Content-Type: text/plain
+
+<Compliance VC JWT as the raw response body>
+----
+
+The returned Compliance VC JWT is persisted as-is in `IssuedAttestation.rawCredential`.
+See ADR 17 for the storage rationale.
+
+**Test coverage.**
+Live GXDCH coverage requires a deployment stage whose signing certificate is reachable via a public `x5u` URL (the Trust Anchor Registry must be able to resolve the chain).
+BDD scenarios tagged `@uses.live-gxdch` are excluded from default CI; they run only in a dedicated Behave profile (`behave --tags=uses.live-gxdch`) against a QA stage with a resolvable certificate chain.
 
 === Admin Configuration Persistence
 

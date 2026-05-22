@@ -30,6 +30,11 @@ The expected layout is `<mount-point>/<bundle-id>/framework.yaml` (plus optional
 Use this mount to customise bundle properties — for example to point `trust_anchor_url` or `service_url` at in-cluster targets — or to add new bundles entirely, without rebuilding the JAR.
 See ADR 10 for overlay deep-merge semantics.
 
+**Activating a Trust Framework Family.**
+Bundled trust-framework families (e.g. `gaia-x`) are registered but disabled by default.
+A family can be enabled at runtime via the Admin API (persisted) or statically via the `FEDERATED_CATALOGUE_ENABLED_TRUST_FRAMEWORKS` environment variable (applied on every boot).
+Refer to the OpenAPI specification for the exact endpoint contract.
+
 Kubernetesfootnote:[https://kubernetes.io/[Kubernetes]] is the recommended infrastructure for production deployment. For development, Dockerfootnote:[https://www.docker.com/[Docker: Accelerated, Containerized Application Development]] in combination with docker-compose can be used.
 
 === Admin UI — Keycloak Setup
