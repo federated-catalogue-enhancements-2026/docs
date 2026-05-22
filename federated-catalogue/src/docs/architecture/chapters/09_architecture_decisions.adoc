@@ -594,8 +594,12 @@ Both are administrative-configuration mismatches under operator control, not ser
 
 **Decision:** All three adapters are wired unconditionally at boot. A single `RoutingGraphStore` (`@Primary`) holds the currently-active adapter behind a `volatile` reference and delegates every `GraphStore` call to it. Switching is exposed as `POST /admin/graph-database/switch`:
 
-. The target backend is pre-flighted by `GraphStoreProbe` — a Bolt `verifyConnectivity()` against `graphstore.neo4j.uri` for Neo4j, an HTTP GET against `graphstore.fuseki.uri` for Fuseki. An unreachable target is rejected with `400 Bad Request` and no state changes.
-. On a successful probe, the choice is persisted to `admin_config[graphstore.preferred.backend]`, and `RoutingGraphStore.setActive(...)` (synchronized) updates the volatile reference. Subsequent calls observe the new adapter immediately.
+. The target backend is pre-flighted by `GraphStoreProbe` — a Bolt `verifyConnectivity()` against `graphstore.neo4j.uri` for Neo4j, an HTTP GET against `graphstore.fuseki.uri` for Fuseki.
+Each probe is capped at a 3 s budget (driver-side for Bolt, request-side for HTTP), so a black-holed host cannot stall the admin endpoint past the operator's attention span.
+An unreachable target is rejected with `400 Bad Request` and no state changes.
+If the requested backend has no registered adapter in the deployment, the endpoint also returns `400` — silent fallback to `NONE` would leave the operator believing the switch succeeded.
+. On a successful probe, `RoutingGraphStore.setActive(...)` (synchronized) updates the volatile reference first; only after the swap returns is the choice persisted to `admin_config[graphstore.preferred.backend]`.
+Reversing this order would let a swap failure strand a preference for a backend the next cold boot could not actually serve.
 
 On cold boot the active backend is resolved as: persisted preference → `graphstore.impl` property → `NONE`. Each adapter opens its driver lazily on first use, so an unreachable inactive backend does not block startup.
 
