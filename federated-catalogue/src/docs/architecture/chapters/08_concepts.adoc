@@ -171,6 +171,15 @@ Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` t
 | `graphstore.preferred.backend` | Preferred graph database backend
 |===
 
+=== Admin API Mutation Convention
+
+Admin resource mutations follow a single convention: `PATCH /admin/<resource>/{id}` with an `application/merge-patch+json` body containing only the fields being modified.
+The body schema enforces `minProperties: 1` (empty patches are rejected with `400`) and `additionalProperties: false` (unknown fields are rejected with `400`).
+Absent fields are left unchanged; the API does not distinguish "absent" from "explicit null" at the wire level.
+
+This convention applies uniformly to family-level trust-framework updates (`PATCH /admin/trust-frameworks/{id}`), per-bundle role state (`PATCH /admin/trust-frameworks/{bundleId}/roles/{roleName}`), and schema validation module toggles (`PATCH /admin/schema-validation/modules/{type}`).
+The earlier `PUT /…/enabled?enabled=<bool>` shape used during initial admin-API development is no longer accepted.
+
 === Input Parsing Security
 
 User-supplied content (assets, schemas, IRIs) is parsed only by hardened, sandboxed parsers. The catalogue treats every external byte sequence as untrusted, regardless of the caller's role. The same posture is applied uniformly across validators and graph stores.
