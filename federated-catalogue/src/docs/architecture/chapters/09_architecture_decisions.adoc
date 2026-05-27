@@ -659,3 +659,63 @@ The runtime status endpoint (`GET /admin/graph-database`) reports the active bac
 * The pre-flight probe is the only thing standing between an operator and an unbootable next start: persisting a preference for an unreachable backend would trap the cold-boot resolution path. Rejecting unreachable targets at the API level is therefore mandatory, not advisory.
 
 * A backend switch leaves the new store empty (it has its own claim graph, independent of the previous backend). The `rebuildNeeded` signal in the status response makes this state explicit so the admin UI can surface a single-click rebuild via the existing `GraphRebuildService` path. No data is migrated between backends — the metadata store is the source of truth, and the graph is a derived index per ADR-level discussions of the rebuild contract.
+=== ADR 19: Runtime override of per-bundle external client identifiers
+
+**Related:** ADR 10, ADR 16, ADR 17, ADR 18.
+
+**Context:** Trust-framework bundles declare the external client identifiers a compliance check uses — the client implementation key, the compliance service endpoint, the per-request timeout, the trust-anchor list location, and similar wire-shape parameters.
+Until now these were loaded once at boot from each bundle's YAML (or its filesystem overlay, see ADR 10) into an immutable in-memory registry.
+Changing any of them required editing the YAML on disk and restarting the catalogue, which is incompatible with the requirement that an administrator be able to configure these identifiers without redeployment for every implemented trust-framework client module.
+
+Three storage models for runtime overrides were considered:
+
+1. **Family-scoped overrides:** add columns to the existing family-level row.
+Simple, but the unit of variation is the bundle, not the family — multiple bundles within one family can deliberately target different endpoints (a Loire v2 bundle and a future v3 bundle, a test bundle alongside a production bundle).
+Family-scoped overrides would silently apply the same value to all bundles in the family.
+
+2. **Bundle-scoped overrides in a separate table (chosen):** a new persistence table keyed by the bundle's profile ID, with one nullable cell per overridable identifier.
+Absence of a cell value means "no override for this field — use the YAML value".
+A resolver service layers the override over the YAML baseline at every read.
+
+3. **Free-form key/value rows:** one row per (bundle, key) pair with an opaque value.
+More flexible but defers all typing and validation to write-time; harder to evolve when new typed fields appear; harder to audit.
+
+For the write semantics, RFC 7396 merge-patch with explicit-null clearing is used: setting a key to a value persists it as an override; setting it to JSON `null` clears the override and lets the baseline flow through again; omitting a key leaves any existing state untouched.
+This makes per-field reversion a non-destructive, single-call operation.
+
+**Decision:** Persisted runtime overrides are scoped per bundle and stored in their own table.
+A new resolver bean merges DB overrides over the YAML baseline at every compliance call, with precedence **DB override > bundle YAML > hard-coded default**.
+The admin API exposes RFC 7396 merge-patch on the bundle resource and a wholesale clear via `DELETE`.
+The bundle-list read endpoint returns each bundle's effective configuration alongside the names of fields whose effective value comes from an override, so a UI can render current state without a second round-trip.
+
+**Rationale:**
+
+* Bundle-scoping matches the real unit of variation.
+A family is a stable identity group; a bundle is the deployable artefact that talks to one external endpoint at one version.
+Tying overrides to family would make co-existence of bundle versions impossible without further indirection.
+
+* RFC 7396 with explicit-null is the smallest sufficient semantic.
+It lets the operator change one field without re-declaring the others, and it gives a non-destructive path back to the baseline per field.
+The wholesale clear exists for the "revert this whole bundle to the baseline" case and is idempotent.
+
+* The resolver is a separate bean from the registry to keep the registry as the canonical YAML truth and to keep the override read path testable in isolation.
+The compliance pipeline consumes the resolver; the registry continues to serve role resolution and bundle discovery.
+
+* Auditing timestamps are stored with timezone information.
+The catalogue is part of a federated ecosystem in which operators, producers, and consumers live in different timezones; a timezone-naive timestamp would silently equate two distinct instants written from different regions.
+
+**Consequences:**
+
+* The compliance call path acquires one additional read against the override store per check.
+The read is keyed by primary key and the table is small (cardinality ≈ number of registered bundles), so the cost is negligible.
+No caching layer is introduced; the existing per-timeout client cache continues to serve subsequent calls, and endpoint-identifier changes take effect immediately because the values are read from the resolved config on every call.
+
+* The persistence-layer auditing infrastructure is wired to populate timezone-aware timestamp columns so the resolver-managed table records the same temporal information as the rest of the admin state.
+
+* The admin security configuration gains a wholesale-clear rule for the new resource.
+Without it, the clear operation would have been protected only by the catch-all login-status rule rather than by the admin role.
+
+* Override rows for bundle IDs that are no longer registered are logged and ignored at read time rather than failing the request, so renaming or removing a bundle is not a breaking change for the override store.
+
+* Operators receive an immediate-effect channel for endpoint reconfiguration that does not require touching deployment artefacts.
+The deployment-time filesystem overlay (ADR 10) remains the right tool for bundle-shape changes (roles, ontology, validation type) and for shipping a new bundle; the DB override path is reserved for the external identifiers of an already-registered bundle.
