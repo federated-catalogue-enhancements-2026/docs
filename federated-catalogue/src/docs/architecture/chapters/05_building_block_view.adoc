@@ -492,17 +492,19 @@ classDiagram
     LoirePolicyEnforcer --> TrustFrameworkService : isEnabled("gaia-x")
 ....
 
-The bounded context exposes two beans with complementary responsibilities:
+The bounded context exposes four beans with complementary responsibilities:
 
 [options="header",cols="1,2,3"]
 |===
 | Bean | Backing store | Responsibility
 | `TrustFrameworkRegistry` | Classpath bundles (in-memory at boot) | Owns the type-URI → role index and the bundle config tree. Read-only after startup.
-| `TrustFrameworkService` | `trust_frameworks` DB table | Mediates the admin-toggleable enabled flag per framework family. The only bean other beans inject when they need to read or change the runtime on/off state.
+| `TrustFrameworkService` | Persistence layer (family + role state) | Mediates the admin-toggleable enabled flag per framework family and the per-bundle role enabled state. The bean other beans inject when they need to read or change the runtime on/off state.
+| `TrustFrameworkBundleConfigService` | Persistence layer (per-bundle override store) | Mediates writes to the per-bundle runtime overrides of external client identifiers. Apply (merge-patch with explicit-null clear) and wholesale clear; see ADR 19.
+| `TrustFrameworkProfileResolver` | Registry + override store | Resolves the effective profile configuration for a given bundle by merging the persisted override over the YAML baseline. The compliance pipeline consumes this bean rather than reading the registry directly.
 |===
 
-This split keeps the bundle (config, roles, ontology) immutable in code/resources, while the runtime enable/disable decision stays as operator state in the database.
-Other bounded contexts (verification, admin API) inject `TrustFrameworkService` rather than the `TrustFrameworkRepository` directly, preserving the bounded-context boundary.
+This split keeps the bundle (config, roles, ontology) immutable in code/resources, while the runtime enable/disable decision and the runtime overrides of external client identifiers stay as operator state in the database.
+Other bounded contexts inject these beans rather than the repositories directly, preserving the bounded-context boundary.
 
 **Role indexing (SHACL bundles):** for each role declared in `framework.yaml`, the registry takes the root URI as `namespace + roleName`, then walks the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every subclass under that role.
 The `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.

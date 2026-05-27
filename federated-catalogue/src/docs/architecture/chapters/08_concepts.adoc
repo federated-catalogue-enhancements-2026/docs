@@ -95,6 +95,17 @@ properties:
   trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
 ----
 
+==== Runtime Override Precedence
+
+The filesystem overlay above is a deployment-time mechanism; it requires editing a mounted file and restarting (or reloading) the catalogue.
+For the subset of bundle properties that are *external client identifiers* (client implementation key, compliance service endpoint, per-request timeout, trust-anchor list location, etc.) a second, runtime-only override path exists — see ADR 19.
+
+Resolution order at every compliance call is **DB override > bundle YAML > hard-coded default**, performed by `TrustFrameworkProfileResolver` and returned as the effective configuration to the compliance pipeline.
+The registry continues to serve role resolution and bundle discovery; it does not consult the DB.
+
+The DB-override layer is for administrators changing endpoint identifiers without redeployment.
+The filesystem overlay remains the right tool for bundle-shape changes (roles, ontology, validation type) and for shipping a new bundle.
+
 ==== Type Dispatch and the OWL Toggle
 
 When a credential arrives, the catalogue maps its `credentialSubject` type URI to a trust-framework role through three tiers, in order:
@@ -162,22 +173,34 @@ BDD scenarios tagged `@uses.live-gxdch` are excluded from default CI; they run o
 
 === Admin Configuration Persistence
 
-Admin configuration is backed by two PostgreSQL tables. The `trust_frameworks` table holds structured trust framework definitions (columns: `id`, `name`, `service_url`, `api_version`, `timeout_seconds`, `enabled`, `created_at`, `updated_at`), seeded with a single Gaia-X entry. The `admin_config` table is a generic key-value store (`config_key` PK, `config_value`) for all other runtime settings:
+Admin configuration is split across four kinds of persisted state:
 
-[options="header",cols="2,3"]
-|===
-| Key | Purpose
-| `schema.module.{TYPE}.enabled` | Enable/disable individual schema validation modules (SHACL, JSON_SCHEMA, XML_SCHEMA, OWL)
-| `graphstore.preferred.backend` | Preferred graph database backend
-|===
+* **Family-level enable/disable.** One row per trust-framework family known at deployment time; the row carries the operator-toggleable enabled flag and identifies the family.
+* **Per-bundle role state.** One entry per (bundle, role) pair the operator has explicitly disabled; absence of an entry means the role is enabled by default.
+* **Per-bundle runtime overrides** of the external client identifiers declared in the bundle YAML.
+Each entry is keyed by the bundle profile ID; a missing override for a given identifier means "use the YAML value".
+See ADR 19 for the resolver and precedence model.
+* **Generic key-value runtime settings** (schema-module toggles, preferred graph backend, and similar) that do not warrant their own table.
+
+The authoritative column-level definitions live in the Liquibase changesets; this section is a conceptual map of which kind of state lives where.
 
 === Admin API Mutation Convention
 
-Admin resource mutations follow a single convention: `PATCH /admin/<resource>/{id}` with an `application/merge-patch+json` body containing only the fields being modified.
-The body schema enforces `minProperties: 1` (empty patches are rejected with `400`) and `additionalProperties: false` (unknown fields are rejected with `400`).
-Absent fields are left unchanged; the API does not distinguish "absent" from "explicit null" at the wire level.
+Admin resource mutations follow a single convention: `PATCH` of the resource with an `application/merge-patch+json` body containing only the fields being modified.
+Empty patches are rejected at the API boundary; absent fields are left unchanged.
 
-This convention applies uniformly to family-level trust-framework updates (`PATCH /admin/trust-frameworks/{id}`), per-bundle role state (`PATCH /admin/trust-frameworks/{bundleId}/roles/{roleName}`), and schema validation module toggles (`PATCH /admin/schema-validation/modules/{type}`).
+Two flavours of merge-patch coexist:
+
+* **Strict typed patch** — used for resources whose only mutable state is a boolean toggle (family enabled flag, role enabled flag, schema-module enabled flag).
+The body is a fully-typed DTO; unknown keys are rejected.
+JSON `null` carries no useful meaning for a boolean, so absent and explicit-null are not distinguished.
+
+* **RFC 7396 patch with explicit-null clearing** — used where the resource carries operator-set overrides that need a non-destructive revert path (currently per-bundle runtime overrides; see ADR 19).
+Setting a recognised key to a value persists it as an override; setting it to JSON `null` clears that override and lets the baseline flow through again; omitting a key leaves the existing state untouched.
+
+A wholesale revert via `DELETE` on the bundle override resource exists for the "back to baseline for this whole bundle" case; it is idempotent.
+
+The OpenAPI spec is authoritative for which endpoints follow which flavour.
 The earlier `PUT /…/enabled?enabled=<bool>` shape used during initial admin-API development is no longer accepted.
 
 === Input Parsing Security

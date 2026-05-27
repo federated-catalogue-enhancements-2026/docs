@@ -506,6 +506,7 @@ There is no per-role Java result type and no `result_type` declaration in `frame
 * JSON Schema validation engine wiring (bundles with `validation_type: json-schema` load but defer until the engine is integrated)
 * A second framework bundle delivered alongside the catalogue — the mechanism exists; only the current Gaia-X bundle (release-tagged) ships at present
 * A generic type-URI-based query API — the existing role-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different role names can expose them via framework-specific endpoints or a generic type query
+* Runtime override of a bundle's external client identifiers — covered by ADR 19. Bundles registered via this ADR are immutable at boot; runtime adjustment happens through the resolver and override store described in ADR 19.
 
 **Rationale:**
 
