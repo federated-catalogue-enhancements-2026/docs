@@ -128,7 +128,7 @@ Non-RDF schemas are uploaded and managed through the same `/schemas` endpoint as
 
 Non-RDF schemas appear in the schema listing (`GET /schemas`) under their own type categories (`jsonSchemas`, `xmlSchemas`) and can be retrieved, replaced, and deleted through the standard schema CRUD endpoints. They are **not used for automatic SHACL verification** of credentials, but the on-demand validation endpoint (`POST /assets/validate`) does invoke the corresponding validator for non-RDF assets — JSON Schema for `application/json` assets, XML Schema for `application/xml` assets — when the caller selects a matching schema.
 
-Each of the four schema languages exposed through `/schemas` (SHACL, JSON Schema, XML Schema, OWL) has an administrative on/off toggle managed through the admin schema-modules page; see ADR 16 for the toggle semantics and the asymmetric role of the OWL toggle (which gates role resolution rather than a validator).
+Each of the four schema languages exposed through `/schemas` (SHACL, JSON Schema, XML Schema, OWL) has an administrative on/off toggle managed through the admin schema-modules page; see ADR 16 for the toggle semantics and the asymmetric role of the OWL toggle (which gates base-class resolution rather than a validator).
 
 ==== Schema Validation Checks
 Each schema before adding it, will be analysed. The Analysis process should check first

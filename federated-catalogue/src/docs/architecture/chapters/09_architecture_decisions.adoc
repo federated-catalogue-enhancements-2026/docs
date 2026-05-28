@@ -266,7 +266,7 @@ service-offering:
 Format-aware resolution in `CredentialVerificationStrategy.resolveBaseClass()`:
 
 * `GAIAX_V2_LOIRE` → uses `type` (2511 URIs)
-* `VC2_DANUBETECH` → skips Gaia-X type resolution entirely (domain-specific ontologies)
+* `VC2_DANUBETECH` → skips Gaia-X base-class resolution entirely (domain-specific ontologies)
 
 ==== Stripped Ontology: Why the Registry OWL Cannot Be Used Directly
 
@@ -331,7 +331,7 @@ If a future 2511 spec version introduces `owl:equivalentClass`, `owl:intersectio
 * Non-Gaia-X VC 2.0 (`VC2_DANUBETECH`) intentionally bypasses Gaia-X type resolution — future trust framework support for non-Gaia-X federations will add pluggable type resolution.
 * The SRS preamble envisions the catalogue as a generic, trust-framework-agnostic metadata store. Removing a single legacy trust framework generation aligns with this direction — the catalogue's verification pipeline is designed to be pluggable, not permanently coupled to any specific Gaia-X release.
 
-=== ADR 10: Trust Framework Bundles and Dynamic Role Resolution
+=== ADR 10: Trust Framework Bundles and Dynamic Base-class Resolution
 
 **Related:** ADR 8, ADR 9
 
@@ -357,18 +357,18 @@ Fixes DSO immediately but deepens every structural problem above.
 2. **SHACL-driven discovery, retain enum:** Replace hardcoded URIs with runtime discovery; keep `TrustFrameworkBaseClass` enum as the routing label.
 Fixes DSO and enables new frameworks via config, but the fixed enum still couples the API and storage schema to Gaia-X concepts.
 
-3. **Bundle-per-framework with explicit role declarations (chosen):** Each trust framework is a self-contained bundle (ontology + SHACL + a YAML config that declares the framework's roles), packaged with the JAR or supplied at deployment time as a filesystem directory.
-At startup the catalogue loads all bundles, builds a `<typeUri> → <ResolvedRole>` index by walking each declared role's subclass closure, and routes credentials by role string.
+3. **Bundle-per-framework with explicit base-class declarations (chosen):** Each trust framework is a self-contained bundle (ontology + SHACL + a YAML config that declares the framework's base classes), packaged with the JAR or supplied at deployment time as a filesystem directory.
+At startup the catalogue loads all bundles, builds a `<typeUri> → <ResolvedBaseClass>` index by walking each declared base class's subclass closure, and routes credentials by base-class string.
 No trust-framework concept exists in Java source — only in the bundle configs.
 
-**Decision:** Option 3 — bundle-per-framework with explicit role declarations and dynamic subclass-closure indexing.
+**Decision:** Option 3 — bundle-per-framework with explicit base-class declarations and dynamic subclass-closure indexing.
 
 **Bundle layout:**
 
 ----
 trustframeworks/
   <bundle-id>/
-    framework.yaml      # bundle metadata and role declarations
+    framework.yaml      # bundle metadata and base-class declarations
     ontology.ttl        # OWL class hierarchy (optional for non-SHACL bundles)
     shapes.ttl          # SHACL shapes (optional for non-SHACL bundles)
 ----
@@ -390,9 +390,9 @@ family: gaia-x                           # framework family (groups related prof
 namespace: "https://w3id.org/gaia-x/2511#"
 validation_type: shacl                   # shacl | json-schema | unknown
 
-roles:
-  Participant:                           # role name = OWL local name; URI = namespace + roleName
-    additional_roots: [ ]                # extra URIs mapped to this role (non-OWL-subclass siblings)
+base_classes:
+  Participant:                           # base-class name = OWL local name; URI = namespace + baseClassName
+    additional_roots: [ ]                # extra URIs mapped to this base class (non-OWL-subclass siblings)
     types: [ ]                           # forward-compat for json-schema engines (unused for shacl)
   ServiceOffering:
     additional_roots:
@@ -416,11 +416,11 @@ Resolution rule for filesystem entries:
 If `id` is missing or blank the entry is skipped with a warning.
 * If `id` matches a classpath bundle, the filesystem entry is treated as an **overlay**: it is deep-merged onto the classpath base.
 The filesystem file therefore only needs to declare `id` plus the fields it changes.
-* If `id` is new (no classpath match), the entry is treated as a **new bundle** and must declare all mandatory fields (`id`, `family`, `namespace`, `validation_type`, `roles`).
+* If `id` is new (no classpath match), the entry is treated as a **new bundle** and must declare all mandatory fields (`id`, `family`, `namespace`, `validation_type`, `base_classes`).
 
 Merge semantics for overlays:
 
-* Nested maps (e.g. `properties:`, `roles:`) merge recursively; the filesystem value wins at each leaf key.
+* Nested maps (e.g. `properties:`, `base_classes:`) merge recursively; the filesystem value wins at each leaf key.
 * Lists (e.g. `additional_roots`, `types`) and scalars (e.g. `namespace`, `validation_type`) replace wholesale when the filesystem provides them.
 * Sibling files (`ontology.ttl`, `shapes.ttl`) are inherited from the classpath bundle when the overlay directory does not ship its own.
 
@@ -433,28 +433,28 @@ properties:
   trust_anchor_url: "https://did-server/api/trustAnchor/chain/file"
 ----
 
-**Role declaration is a manual, per-framework curation step — not auto-derivable.**
-The `roles:` map is the bundle author's hand-written declaration of which classes the catalogue dispatches on as top-level credential subjects.
-It cannot be extracted from the ontology, because trust-framework ontologies do not mark classes as "catalogue roles":
+**Base-class declaration is a manual, per-framework curation step — not auto-derivable.**
+The `base_classes:` map is the bundle author's hand-written declaration of which classes the catalogue dispatches on as top-level credential subjects.
+It cannot be extracted from the ontology, because trust-framework ontologies do not mark classes as "catalogue base classes":
 
 * In Gaia-X 2511 specifically (`gx-2511`, the only framework currently shipped), every `gx:` subject in the ontology is exactly one of `owl:Class`, `owl:DatatypeProperty`, or `owl:ObjectProperty`.
-There is no `gx:CatalogueRole` superclass, no `isRole` annotation property, no skos scheme that groups Participant + ServiceOffering + Resource together.
+There is no `gx:CatalogueBaseClass` superclass, no `isBaseClass` annotation property, no skos scheme that groups Participant + ServiceOffering + Resource together.
 The 213 named OWL classes are structurally indistinguishable from one another as far as the model is concerned — Address, Endpoint, RegistrationNumber and Participant are peers in the type hierarchy.
-* `skos:inScheme` exists on most classes but is purely topical categorisation (legal, storage, compute, …); the `gx:participant` scheme happens to contain only Participant, but `gx:legal` contains 37 classes that are not roles.
-* JSON-Schema-based frameworks (e.g. UNTP, see ADR 12) have no OWL ontology at all; the role list is declared explicitly under `types:` for the same reason.
+* `skos:inScheme` exists on most classes but is purely topical categorisation (legal, storage, compute, …); the `gx:participant` scheme happens to contain only Participant, but `gx:legal` contains 37 classes that are not base classes.
+* JSON-Schema-based frameworks (e.g. UNTP, see ADR 12) have no OWL ontology at all; the base-class list is declared explicitly under `types:` for the same reason.
 
-Where role-ness *is* encoded — outside the ontology — is in three operative places: the conformity body's issuer behaviour (which `credentialSubject.type` values it actually mints as top-level VCs), the framework's architecture/compliance specification prose, and sample VPs published by the conformity body.
+Where base-class-ness *is* encoded — outside the ontology — is in three operative places: the conformity body's issuer behaviour (which `credentialSubject.type` values it actually mints as top-level VCs), the framework's architecture/compliance specification prose, and sample VPs published by the conformity body.
 None of these are machine-readable from the catalogue's perspective.
 
 The practical consequence: onboarding a new trust framework is a curation task.
-The bundle author reads the framework's spec and conformity-body docs, identifies the small set (typically three to ten) of credential types the catalogue should surface, and writes them into `roles:`.
+The bundle author reads the framework's spec and conformity-body docs, identifies the small set (typically three to ten) of credential types the catalogue should surface, and writes them into `base_classes:`.
 The list is short by design and stable across ontology revisions; subclass-closure indexing handles the rest of the type hierarchy automatically.
 
-**Role indexing (SHACL bundles):** For each declared role, the registry takes the root URI as `namespace + roleName`, then walks DOWN the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every reachable class under that role.
-The optional `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.
+**Base-class indexing (SHACL bundles):** For each declared base class, the registry takes the root URI as `namespace + baseClassName`, then walks DOWN the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every reachable class under that base class.
+The optional `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same base class.
 Bundles whose `validation_type` is not `shacl` are loaded but deferred (no validation engine wired yet); a WARN is logged.
 
-The Loire 2511 bundle declares `gx:DigitalServiceOffering` as an `additional_root` of the `ServiceOffering` role.
+The Loire 2511 bundle declares `gx:DigitalServiceOffering` as an `additional_root` of the `ServiceOffering` base class.
 The decision is defensive: the upstream specification is internally inconsistent on DSO — the ontology declares the class abstract (`skos:definition` "the virtual base class for any kind of digital service (for inheritance not for instanciation)"), defines no `rdfs:subClassOf gx:ServiceOffering` link and no concrete subclasses, yet the SHACL layer assigns it its own `sh:targetClass`.
 A `rdfs:subClassOf*` walk from `gx:ServiceOffering` therefore never reaches DSO, and routing has to be added explicitly if the catalogue is to accept DSO credentials at all.
 Empirically the conformity body does not currently issue DSO at the top level (the Loire compliance dispatcher has no DSO-specific validation component, the published compliance criteria do not cover DSO, and the official Loire test presentations contain only `gx:LegalPerson`, `gx:Issuer`, and `gx:VatID` under the Participant family).
@@ -462,10 +462,10 @@ The mapping is therefore inactive in practice today and exists as a zero-cost sa
 
 **`TrustFrameworkRegistry` (new bean, registered by `TrustFrameworkRegistryConfig`):**
 
-* `resolveRole(typeUri): ResolvedRole` — returns `(frameworkProfileId, role)` for a credential subject's type URI, or `ResolvedRole.UNKNOWN` if no bundle claims the type
+* `resolveBaseClass(typeUri): ResolvedBaseClass` — returns `(frameworkProfileId, baseClass)` for a credential subject's type URI, or `ResolvedBaseClass.UNKNOWN` if no bundle claims the type
 * `getActiveBundles()` — collection of bundles whose validation engine is wired (deferred bundles excluded)
 * `getBundle(profileId)` — bundle lookup
-* `getEffectiveRoles(profileId)` — role set declared by a bundle
+* `getEffectiveBaseClasses(profileId)` — base-class set declared by a bundle
 * `isFrameworkEnabled(profileId)` — true for SHACL-active bundles
 
 **`TrustFrameworkService` (new bean):** mediates the DB-backed enabled flag per framework family (table `trust_frameworks`).
@@ -482,8 +482,8 @@ Reads the Trust Anchor Registry URL from its bundle's `properties.trust_anchor_u
 The enforcer is a no-op when the `gaia-x` family is disabled, so any processor can call `enforceIfApplicable()` without pre-checking enablement.
 
 **`TrustFrameworkBaseClass` enum:** removed.
-Call sites use `ResolvedRole` (a record carrying `frameworkProfileId: String` and `role: String`).
-Storage and API routing dispatch on the role string directly; the bundle config — not Java source — is the authority for what roles exist.
+Call sites use `ResolvedBaseClass` (a record carrying `frameworkProfileId: String` and `baseClass: String`).
+Storage and API routing dispatch on the base-class string directly; the bundle config — not Java source — is the authority for what base classes exist.
 
 **`CredentialFormat`:** the existing `GAIAX_V2_LOIRE` / `VC2_DANUBETECH` enum continues to drive format detection (JWT structure, header validation, unwrapping).
 It is independent of role resolution: any credential whose subject type URI is registered by some bundle resolves to that bundle's role, regardless of which JWT format envelope carries it.
@@ -498,14 +498,14 @@ Type URIs are now declared exclusively in each bundle's `framework.yaml`.
 
 **Result materialization:**
 
-The verification core returns a single generic result schema across all roles; the `role` field on the result carries the bundle-declared role name (e.g. `Participant`) and consumers dispatch on that string.
-There is no per-role Java result type and no `result_type` declaration in `framework.yaml`: the role name itself is the dispatch key, and adding a new role to a bundle requires no Java change.
+The verification core returns a single generic result schema across all base classes; the `baseClass` field on the result carries the bundle-declared base-class name (e.g. `Participant`) and consumers dispatch on that string.
+There is no per-base-class Java result type and no `result_type` declaration in `framework.yaml`: the base-class name itself is the dispatch key, and adding a new base class to a bundle requires no Java change.
 
 **Out of scope for this ADR:**
 
 * JSON Schema validation engine wiring (bundles with `validation_type: json-schema` load but defer until the engine is integrated)
 * A second framework bundle delivered alongside the catalogue — the mechanism exists; only the current Gaia-X bundle (release-tagged) ships at present
-* A generic type-URI-based query API — the existing role-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different role names can expose them via framework-specific endpoints or a generic type query
+* A generic type-URI-based query API — the existing base-class-based endpoints (`/participants`, `/service-offerings`, `/resources`) cover current needs; future frameworks that define different base-class names can expose them via framework-specific endpoints or a generic type query
 * Runtime override of a bundle's external client identifiers — covered by ADR 19. Bundles registered via this ADR are immutable at boot; runtime adjustment happens through the resolver and override store described in ADR 19.
 
 **Rationale:**
@@ -513,7 +513,7 @@ There is no per-role Java result type and no `result_type` declaration in `frame
 * Fully bundled framework definitions make adding `gx:DigitalServiceOffering` (or any future sibling) a one-line change in `framework.yaml` — no Java, no redeploy logic.
 * Removing the enum eliminates the architectural coupling between Gaia-X ontology structure and Java source; the verification pipeline is now a generic engine driven by bundle metadata.
 * Bundle-per-framework gives a clear extension point — a developer adding a new framework drops a directory; the registry treats it identically to the bundled one.
-* Explicit role declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three role names, not the full transitive subclass closure.
+* Explicit base-class declarations (rather than `sh:targetClass` auto-discovery) keep the bundle's public surface minimal and reviewable: a reader sees three base-class names, not the full transitive subclass closure.
 * Supersedes the hardcoded `loireBaseClassUris` / `legacyBaseClassUris` maps and `service-offering.type` / `participant.type` / `resource.type` properties introduced in ADR 9.
 * The typed result POJOs `CredentialVerificationResultParticipant`, `CredentialVerificationResultOffering`, and `CredentialVerificationResultResource` were removed without an adapter or deprecation window.
 No known external Java consumers of these typed return values exist: the catalogue's public interface is its REST/OpenAPI endpoints and NATS events, not Java class types.
@@ -553,14 +553,14 @@ Overwrite semantics simplify the data model: no partial-merge conflicts, no orde
 
 **Related:** ADR 4, ADR 7.
 
-=== ADR 16: Schema-module admin toggles, with OWL gating role resolution
+=== ADR 16: Schema-module admin toggles, with OWL gating base-class resolution
 
 **Related:** ADR 10.
 
 **Context:** Four schema languages — SHACL, JSON Schema, XML Schema, OWL — must each be enable/disable-able at runtime through the administration UI, and every toggle must have a demonstrable effect.
 
 SHACL, JSON Schema, and XML Schema all fit a uniform validator shape: input runs against stored schemas of the matching type and a conformance verdict is returned.
-OWL is different — uploaded ontologies extend the type vocabulary the role resolver consults via `rdfs:subClassOf+`; OWL has no validation step of its own.
+OWL is different — uploaded ontologies extend the type vocabulary the base-class resolver consults via `rdfs:subClassOf+`; OWL has no validation step of its own.
 A uniform `module_disabled` semantic therefore does not fit OWL: without separate semantics, the OWL toggle would persist in the database with no observable effect, which violates the demonstrable-effect requirement.
 
 **Decision:** Expose all four toggles on the admin schema-modules page, but treat them as two semantic classes. The admin UI splits the two classes into separate sections so the asymmetry is visible to operators.
@@ -569,17 +569,17 @@ A uniform `module_disabled` semantic therefore does not fit OWL: without separat
 When off, the affected endpoint returns `400 Bad Request` with body `module_disabled:<MODULE>`.
 Schema storage is unaffected; schemas remain queryable through the schema endpoints regardless of toggle state.
 
-* **OWL:** the toggle gates the third tier of role resolution — the `rdfs:subClassOf+` walk over runtime-uploaded ontologies, on top of the registry index and `additional_roots` defined by ADR 10.
-When off, only tiers 1 and 2 are consulted; credentials whose type is only reachable through the subclass walk resolve to `ResolvedRole.UNKNOWN`, and the verification entry point rejects them with `400 Bad Request`.
+* **OWL:** the toggle gates the third tier of base-class resolution — the `rdfs:subClassOf+` walk over runtime-uploaded ontologies, on top of the registry index and `additional_roots` defined by ADR 10.
+When off, only tiers 1 and 2 are consulted; credentials whose type is only reachable through the subclass walk resolve to `ResolvedBaseClass.UNKNOWN`, and the verification entry point rejects them with `400 Bad Request`.
 Registry-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) are unaffected.
 
 **Consequences:**
 
 * Disabling a validator is *permissive* (a check is skipped); disabling OWL is *restrictive* (the catalogue stops recognising custom subclasses).
-The asymmetry is intentional: gating role resolution is the strongest demonstrable effect for a type-vocabulary input, and a uniform "skip a check" semantic does not exist for OWL.
+The asymmetry is intentional: gating base-class resolution is the strongest demonstrable effect for a type-vocabulary input, and a uniform "skip a check" semantic does not exist for OWL.
 
 * The OWL toggle is independent of the caller's `verifySchema` and `verifySemantics` flags.
-Type dispatch is a configuration of the catalogue's type system, not a per-request validation step, so disabling OWL affects every internal caller of the verification path — asset upload, provenance ingest, asset metadata flow, base subscriber, and on-demand role resolution — independent of how those callers parameterise their request.
+Type dispatch is a configuration of the catalogue's type system, not a per-request validation step, so disabling OWL affects every internal caller of the verification path — asset upload, provenance ingest, asset metadata flow, base subscriber, and on-demand base-class resolution — independent of how those callers parameterise their request.
 
 * The SHACL toggle also gates the periodic revalidation sweep over the existing claims graph.
 When SHACL is administratively disabled, `RevalidationServiceImpl.handleTask` short-circuits — the sweep skips per-asset validation rather than revoke previously-conforming assets against shapes the operator has explicitly silenced.
