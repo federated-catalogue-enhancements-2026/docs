@@ -126,6 +126,12 @@ The identifier must be a valid IRI (see ADR 7).
 |Bundle Properties
 |Free-form `properties:` map declared in a bundle's `framework.yaml`, carrying framework-specific runtime values consumed by that bundle's own beans (e.g. `trust_anchor_url` read by `LoirePolicyEnforcer`). Not interpreted by the `TrustFrameworkRegistry`.
 
+|Bundle Config Override
+|An operator-persisted set of overrides for the external client identifiers of a registered bundle, keyed by the bundle's profile ID. A missing override for a given identifier means "use the YAML value". Written through `TrustFrameworkBundleConfigService` with RFC 7396 merge-patch semantics (explicit `null` clears a single override) and clearable wholesale. See ADR 19.
+
+|Effective Bundle Config
+|The profile configuration returned by `TrustFrameworkProfileResolver` for a given bundle, formed per call by layering the Bundle Config Override (if present) on top of the bundle YAML, with hard-coded defaults filling the remainder. Consumed by the compliance pipeline; also surfaced to the admin UI together with the set of identifiers whose effective value currently comes from an override. See ADR 19.
+
 |Schema Module
 |One of the four runtime-toggleable schema languages exposed on the admin schema-modules page: `SHACL`, `JSON_SCHEMA`, `XML_SCHEMA`, `OWL`. Each toggle persists to the `admin_config` table under `schema.module.<MODULE>.enabled`. Validators (SHACL, JSON Schema, XML Schema) gate the corresponding validator at on-demand validation and credential verification; the OWL toggle gates the runtime composite-ontology subclass walk in role resolution. See ADR 16.
 
