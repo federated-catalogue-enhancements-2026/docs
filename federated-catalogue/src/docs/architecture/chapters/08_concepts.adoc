@@ -34,37 +34,37 @@ As default, all components should log to Standard out. Log aggregation is realiz
 === Trust Framework Bundles
 
 Each supported trust framework is delivered as a self-contained bundle (`framework.yaml` + ontology + SHACL shapes), either packaged with the JAR or supplied at deployment time as a filesystem directory, under `trustframeworks/<bundle-id>/`.
-A `TrustFrameworkRegistry` bean indexes all bundles at boot and resolves credential subject types to bundle-defined roles, replacing the previous hardcoded URI-to-enum mapping.
-See ADR 10 for the design rationale and <<_trust_framework_bundles_and_role_resolution,Building Block View — Trust Framework Bundles and Role Resolution>> for the runtime structure.
+A `TrustFrameworkRegistry` bean indexes all bundles at boot and resolves credential subject types to bundle-defined base classes, replacing the previous hardcoded URI-to-enum mapping.
+See ADR 10 for the design rationale and <<_trust_framework_bundles_and_base_class_resolution,Building Block View — Trust Framework Bundles and Base-class Resolution>> for the runtime structure.
 
-==== Onboarding a Trust Framework: Identifying Roles
+==== Onboarding a Trust Framework: Identifying Base Classes
 
-The bundle's `roles:` map declares the small curated set of root classes that the catalogue dispatches on as top-level credential subjects.
+The bundle's `base_classes:` map declares the small curated set of root classes that the catalogue dispatches on as top-level credential subjects.
 Subclass-closure indexing (`rdfs:subClassOf*`) handles the rest of the type hierarchy automatically; the curation effort is limited to picking the roots.
 
-A non-obvious property of this design: **the role list cannot be derived from the framework's ontology**.
+A non-obvious property of this design: **the base-class list cannot be derived from the framework's ontology**.
 It is a manual, judgment-based curation step that every new bundle author has to perform, and the source-of-truth lies *outside* the ontology file.
 
 *Why the ontology cannot answer the question.* Trust-framework ontologies model the vocabulary — every class that can appear anywhere in a credential's claims graph (legal entity attributes, addresses, endpoints, value objects).
 They do not model which classes are issued as standalone top-level credentials.
-Ontologies do not mark roles: there is no `:isRole` annotation, no `:CatalogueRole` superclass, no SKOS scheme that groups roles together.
-Topical schemes (legal, storage, compute, …) categorise classes by domain and contain many non-role members.
-The role-bearing classes are structurally indistinguishable from value-object classes in the model.
+Ontologies do not mark base classes: there is no `:isBaseClass` annotation, no `:CatalogueBaseClass` superclass, no SKOS scheme that groups base classes together.
+Topical schemes (legal, storage, compute, …) categorise classes by domain and contain many non-base-class members.
+The base-class-bearing classes are structurally indistinguishable from value-object classes in the model.
 Three mechanical proxies — "every named OWL class", "every `sh:targetClass` in the SHACL shapes", "every class whose only superclass is `owl:Thing`" — all over- or under-include in practice.
-JSON-Schema-based frameworks have no OWL ontology at all; the role list is declared explicitly under the bundle's `types:` field for the same reason.
+JSON-Schema-based frameworks have no OWL ontology at all; the base-class list is declared explicitly under the bundle's `types:` field for the same reason.
 
-*Where role-ness is encoded.* Outside the ontology, in three operative places — none of them machine-readable from the catalogue's perspective:
+*Where base-class-ness is encoded.* Outside the ontology, in three operative places — none of them machine-readable from the catalogue's perspective:
 
 * The conformity body's issuer behaviour — which `credentialSubject.type` values it actually mints as top-level VCs.
 Discoverable by inspecting the conformity body's compliance components and the credentials it returns.
 * The framework's compliance and architecture specifications — the per-credential-family compliance criteria.
-The presence of a "criteria for X" document is strong evidence that X is a top-level role; the absence of one for a class — even one that has a SHACL shape — is strong evidence the conformity body does not issue it.
+The presence of a "criteria for X" document is strong evidence that X is a top-level base class; the absence of one for a class — even one that has a SHACL shape — is strong evidence the conformity body does not issue it.
 * Sample verifiable presentations published by the conformity body.
 Decoding the inner VCs of the official test VPs reveals the credential types that actually appear in production traffic.
 
 *Onboarding recipe.* Read the framework's spec to find the section listing top-level credential types.
 Cross-check against the conformity body's component architecture (one validation service per top-level credential family is the typical pattern) and against the conformity body's published sample VPs.
-Where the three sources agree, you have the role list.
+Where the three sources agree, you have the base-class list.
 Where they disagree, prefer what the conformity body operatively does over what the spec aspirationally describes.
 The resulting list is short by design (typically three to ten entries) and stable across ontology revisions.
 
@@ -73,7 +73,7 @@ The resulting list is short by design (typically three to ten entries) and stabl
 * A class whose `skos:definition` declares it abstract ("for inheritance not for instantiation") but which carries its own `sh:targetClass` shape — the shape implies a valid credential subject; the prose implies the opposite.
 * A class that is conceptually a specialisation of another but the ontology does not declare an `rdfs:subClassOf` link between them, often because they live in different parts of the namespace or were modelled independently.
 
-When the conformity body is silent on such a class — no validation component, no criteria document, no test payload — the safe default is a defensive mapping: route the class to the most semantically adjacent existing role via `additional_roots` so credentials of that type, if they ever appear, land somewhere rather than being rejected.
+When the conformity body is silent on such a class — no validation component, no criteria document, no test payload — the safe default is a defensive mapping: route the class to the most semantically adjacent existing base class via `additional_roots` so credentials of that type, if they ever appear, land somewhere rather than being rejected.
 Document the mapping inline with a pointer to what would un-block dropping it (typically: confirmation from the conformity body that the class is never issued at the top level).
 
 ==== Deploying Bundle Overlays
@@ -108,20 +108,20 @@ The filesystem overlay remains the right tool for bundle-shape changes (roles, o
 
 ==== Type Dispatch and the OWL Toggle
 
-When a credential arrives, the catalogue maps its `credentialSubject` type URI to a trust-framework role through three tiers, in order:
+When a credential arrives, the catalogue maps its `credentialSubject` type URI to a trust-framework base class through three tiers, in order:
 
-1. **`TrustFrameworkRegistry.typeIndex`** — a hash lookup populated at boot by walking each bundle's `ontology.ttl` from every declared role down via `rdfs:subClassOf*`. Hits here cover every class statically reachable from a role at startup.
-2. **`additional_roots`** — sibling URIs declared in `framework.yaml` for cases where the ontology's class graph does not connect the sibling to the role (see ADR 10 for the `gx:DigitalServiceOffering` example). Also indexed at boot.
-3. **Composite-ontology subclass walk** — `ClaimValidator.resolveSubjectRole` runs a SPARQL `rdfs:subClassOf+` query against the runtime composite ontology assembled from `ONTOLOGY`-type schema rows. This is the only tier that consults schemas uploaded *after* boot.
+1. **`TrustFrameworkRegistry.typeIndex`** — a hash lookup populated at boot by walking each bundle's `ontology.ttl` from every declared base class down via `rdfs:subClassOf*`. Hits here cover every class statically reachable from a base class at startup.
+2. **`additional_roots`** — sibling URIs declared in `framework.yaml` for cases where the ontology's class graph does not connect the sibling to the base class (see ADR 10 for the `gx:DigitalServiceOffering` example). Also indexed at boot.
+3. **Composite-ontology subclass walk** — `ClaimValidator.resolveSubjectBaseClass` runs a SPARQL `rdfs:subClassOf+` query against the runtime composite ontology assembled from `ONTOLOGY`-type schema rows. This is the only tier that consults schemas uploaded *after* boot.
 
 The OWL administrative toggle (ADR 16) controls whether the catalogue admits **runtime extensions** to its registered type vocabulary.
-With OWL on, custom subclasses introduced through runtime-uploaded ontologies are recognised and routed to the registered role they extend.
+With OWL on, custom subclasses introduced through runtime-uploaded ontologies are recognised and routed to the registered base class they extend.
 With OWL off, the catalogue accepts only the types statically known at boot — credentials whose type was introduced via a runtime ontology upload are rejected at the verification entry point with `400 Bad Request`.
 Tiers 1 and 2 continue to run in either state; only tier 3 (the subclass walk over the runtime composite ontology) is gated.
 The admin UI labels the toggle accordingly, so operators see the user-facing effect rather than the implementation tier it gates.
 
 Disabling OWL therefore has a *narrow* but *strict* effect: framework-direct types (Participant, ServiceOffering, Resource for the Gaia-X 2511 bundle, and equivalents in any other bundle's `framework.yaml`) keep resolving and keep being accepted; custom subclasses defined exclusively in a runtime-uploaded ontology stop resolving and are rejected.
-Gating role resolution is the most visible effect a toggle on a type-vocabulary input can have, and the one that satisfies the demonstrable-effect requirement for runtime toggles.
+Gating base-class resolution is the most visible effect a toggle on a type-vocabulary input can have, and the one that satisfies the demonstrable-effect requirement for runtime toggles.
 
 [[_gxdch_loire_v2_compliance_service]]
 ==== Gaia-X Loire v2 Compliance Service
@@ -176,7 +176,7 @@ BDD scenarios tagged `@uses.live-gxdch` are excluded from default CI; they run o
 Admin configuration is split across four kinds of persisted state:
 
 * **Family-level enable/disable.** One row per trust-framework family known at deployment time; the row carries the operator-toggleable enabled flag and identifies the family.
-* **Per-bundle role state.** One entry per (bundle, role) pair the operator has explicitly disabled; absence of an entry means the role is enabled by default.
+* **Per-bundle base-class state.** One entry per (bundle, base-class) pair the operator has explicitly disabled; absence of an entry means the base class is enabled by default.
 * **Per-bundle runtime overrides** of the external client identifiers declared in the bundle YAML.
 Each entry is keyed by the bundle profile ID; a missing override for a given identifier means "use the YAML value".
 See ADR 19 for the resolver and precedence model.
@@ -191,7 +191,7 @@ Empty patches are rejected at the API boundary; absent fields are left unchanged
 
 Two flavours of merge-patch coexist:
 
-* **Strict typed patch** — used for resources whose only mutable state is a boolean toggle (family enabled flag, role enabled flag, schema-module enabled flag).
+* **Strict typed patch** — used for resources whose only mutable state is a boolean toggle (family enabled flag, base-class enabled flag, schema-module enabled flag).
 The body is a fully-typed DTO; unknown keys are rejected.
 JSON `null` carries no useful meaning for a boolean, so absent and explicit-null are not distinguished.
 
