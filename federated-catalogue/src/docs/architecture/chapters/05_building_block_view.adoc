@@ -83,17 +83,27 @@ For Verifiable Credentials, this is the `credentialSubject` IRI.
 For non-credential RDF assets, this is the IRI extracted from the RDF content (e.g., `@id`).
 The returned IRI can then be used as a filter for the assets endpoint to download the originating asset file.
 
-The graph database backend is **pluggable**. The implementation is selected via the `graphstore.impl` configuration property:
+The graph database backend is **pluggable**. Three adapters are available:
 
 [options="header",cols="1,2,2"]
 |===
-| Value | Backend | Query Language
-| `neo4j` | Neo4j (default) | openCypher
-| `fuseki` | Apache Jena Fuseki | SPARQL-star
-| `none` | No-op / disabled (default when property is missing) | —
+| Backend | Implementation | Query Language
+| `NEO4J` | Neo4j | openCypher
+| `FUSEKI` | Apache Jena Fuseki | SPARQL-star
+| `NONE` | No-op / disabled | —
 |===
 
-Both backends implement the same `GraphStore` interface. Core services contain no backend-specific logic. The `none` backend is selected automatically when `graphstore.impl` is not set.
+All three adapters are wired unconditionally at boot. A single `RoutingGraphStore` (marked `@Primary`) holds the currently-active adapter behind a volatile reference and delegates every `GraphStore` call to it. Core services contain no backend-specific logic; they depend on `GraphStore` only.
+
+The active backend is resolved on cold boot in the following order:
+
+. `admin_config[graphstore.preferred.backend]` — the persisted preference set by a prior admin switch.
+. `graphstore.impl` configuration property — the deployment-time bootstrap.
+. `NONE` — fallback so the application boots even without a configured graph store.
+
+Per-backend connection URIs (`graphstore.neo4j.uri`, `graphstore.fuseki.uri`) are both read at startup so a switch can target either backend without configuration changes. Each adapter opens a driver lazily on first use, so an unreachable backend at boot does not prevent the application from starting.
+
+Operators change the active backend through the Admin API (see <<_admin_api>>). The change takes effect in process on the next call — no JVM restart.
 
 ===== Neo4j backend
 
@@ -264,7 +274,7 @@ classDiagram
     }
 ....
 
-The single `CredentialVerificationResult` type carries the resolved role (e.g. `Participant`, `ServiceOffering`, `Resource` for the `gaia-x-2511` bundle) as a string field populated from `ResolvedRole.role`.
+The single `CredentialVerificationResult` type carries the resolved base class (e.g. `Participant`, `ServiceOffering`, `Resource` for the `gaia-x-2511` bundle) as a string field populated from `ResolvedBaseClass.baseClass`.
 Typed result subclasses (`CredentialVerificationResultParticipant`, `…Offering`, `…Resource`) and the deprecated schema-validation overloads have been removed; callers use `SchemaValidationService` directly for schema validation.
 
 [#_verification_strategy_pattern]
@@ -349,7 +359,7 @@ classDiagram
     }
     class CredentialVerificationResult {
         +id: String
-        +role: String
+        +baseClass: String
         +claims: List~RdfClaim~
         +validators: List~Validator~
     }
@@ -382,7 +392,7 @@ classDiagram
 
 `VerificationServiceImpl` injects both strategy implementations through constructor injection (`@RequiredArgsConstructor`).
 `resolveStrategy(ContentAccessor)` returns `credentialStrategy` for any JWT body and for any JSON-LD body the format detector recognises as a credential; `nonCredentialStrategy` is returned only when the body is plain JSON-LD / RDF and the detector yields `UNKNOWN`.
-After the strategy returns, the service performs one last cross-cutting check: if the result is a credential and `role` is `null`, the credential type is unrecognised by every active trust-framework bundle and the request is rejected with a 400 listing the active bundles and their declared roles.
+After the strategy returns, the service performs one last cross-cutting check: if the result is a credential and `baseClass` is `null`, the credential type is unrecognised by every active trust-framework bundle and the request is rejected with a 400 listing the active bundles and their declared base classes.
 
 `CredentialVerificationStrategy` implements the credential pipeline — format dispatch, JWT signature verification (delegated to the matching `CredentialFormatProcessor`), Loire policy enforcement (`LoirePolicyEnforcer`), EVC/EVP unwrap and inner-VC verification (`EnvelopedCredentialResolver`), JSON-LD unwrap, semantic and schema validation, claim extraction, and protected-namespace filtering.
 `NonCredentialIngestionStrategy` extracts every triple from a plain RDF body via `ClaimExtractionService.extractAllTriples`, applies the protected-namespace filter, and returns a `NonCredentialVerificationResult` — no semantic, schema, or signature verification (those concepts only apply to credentials).
@@ -396,8 +406,8 @@ Loire-specific policies (issuer DID method restriction, `x5u` trust-chain valida
 `EnvelopedCredentialResolver` owns all W3C VC 2.0 `EnvelopedVerifiableCredential` / `EnvelopedVerifiablePresentation` plumbing: detecting and unwrapping outer EVC/EVP wrappers, rewriting a VP's `verifiableCredential` array so inner EVC entries become inline JSON-LD VCs for downstream claim extraction, and verifying inner-VC signatures when the outer is a VP JWT.
 Format-specific JWT unwrapping is delegated back to the matching `CredentialFormatProcessor.unwrapNested()`; the resolver itself only handles the envelope mechanics.
 
-[[_trust_framework_bundles_and_role_resolution]]
-===== Trust Framework Bundles and Role Resolution
+[[_trust_framework_bundles_and_base_class_resolution]]
+===== Trust Framework Bundles and Base-class Resolution
 
 A trust framework's identity, ontology, and SHACL shapes are packaged together as a **bundle** under `classpath:trustframeworks/<bundle-id>/`.
 The catalogue ships with the `gaia-x-2511` bundle and discovers any additional bundles dropped on the classpath at boot.
@@ -407,8 +417,8 @@ See ADR 10 for the full rationale and overlay deep-merge rules.
 [options="header",cols="1,3"]
 |===
 | File | Purpose
-| `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit role declarations
-| `ontology.ttl` | OWL class hierarchy used to derive each role's subclass closure (optional for non-SHACL bundles)
+| `framework.yaml` | Bundle metadata (id, family, namespace, validation type) and explicit base-class declarations
+| `ontology.ttl` | OWL class hierarchy used to derive each base-class subclass closure (optional for non-SHACL bundles)
 | `shapes.ttl` | SHACL shapes loaded into the composite schema graph via the schema-store seed at boot. `SchemaStoreImpl.initializeDefaultSchemas()` seeds each SHACL bundle's `ontology.ttl` and `shapes.ttl` into the schema-store DB on first boot. The `defaultschema/` directory is retained as an operator-overlay fallback for custom schemas not associated with any bundle.
 | `properties:` block in `framework.yaml` | Framework-specific runtime values consumed by the bundle's own beans (e.g. `trust_anchor_url` read by `LoirePolicyEnforcer`). Not interpreted by the registry.
 |===
@@ -416,21 +426,21 @@ See ADR 10 for the full rationale and overlay deep-merge rules.
 `TrustFrameworkBundleLoader` scans `classpath:trustframeworks/*/framework.yaml` at startup, and additionally scans the filesystem override directory when `FEDERATED_CATALOGUE_TRUST_FRAMEWORKS_OVERRIDE_PATH` is set, constructing a `TrustFrameworkBundle` (config + ontology + shapes) per directory.
 Bundles that fail to load are logged at WARN and skipped — they do not abort the load of remaining bundles.
 
-`TrustFrameworkRegistry` indexes the loaded bundles and exposes role resolution to the verification pipeline:
+`TrustFrameworkRegistry` indexes the loaded bundles and exposes base-class resolution to the verification pipeline:
 
 [mermaid,width=1600]
 ....
 classDiagram
     class TrustFrameworkRegistry {
         <<interface>>
-        +resolveRole(typeUri) ResolvedRole
+        +resolveBaseClass(typeUri) ResolvedBaseClass
         +getActiveBundles() Collection~TrustFrameworkBundle~
         +getBundle(profileId) Optional~TrustFrameworkBundle~
-        +getEffectiveRoles(profileId) Set~String~
+        +getEffectiveBaseClasses(profileId) Set~String~
         +isFrameworkEnabled(profileId) boolean
     }
     class TrustFrameworkRegistryImpl {
-        -typeIndex : Map~String, ResolvedRole~
+        -typeIndex : Map~String, ResolvedBaseClass~
         -bundleIndex : Map~String, TrustFrameworkBundle~
         -activeProfileIds : Set~String~
     }
@@ -446,17 +456,17 @@ classDiagram
         +family : String
         +namespace : String
         +validationType : ValidationType
-        +roles : Map~String, RoleConfig~
+        +baseClasses : Map~String, BaseClassConfig~
     }
-    class RoleConfig {
+    class BaseClassConfig {
         <<record>>
         +additionalRoots : List~String~
         +types : List~String~
     }
-    class ResolvedRole {
+    class ResolvedBaseClass {
         <<record>>
         +frameworkProfileId : String
-        +role : String
+        +baseClass : String
         +UNKNOWN$
     }
     class TrustFrameworkBundleLoader {
@@ -474,37 +484,39 @@ classDiagram
     TrustFrameworkRegistry <|.. TrustFrameworkRegistryImpl
     TrustFrameworkRegistryImpl --> TrustFrameworkBundle : indexes
     TrustFrameworkBundle --> FrameworkBundleConfig
-    FrameworkBundleConfig --> RoleConfig : roles
-    TrustFrameworkRegistryImpl --> ResolvedRole : returns
+    FrameworkBundleConfig --> BaseClassConfig : baseClasses
+    TrustFrameworkRegistryImpl --> ResolvedBaseClass : returns
     TrustFrameworkBundleLoader --> TrustFrameworkBundle : produces
-    CredentialVerificationStrategy --> TrustFrameworkRegistry : resolves credential subject roles
+    CredentialVerificationStrategy --> TrustFrameworkRegistry : resolves credential subject base classes
     TrustFrameworkService --> TrustFrameworkRepository : reads/writes\nenabled flag
     LoirePolicyEnforcer --> TrustFrameworkService : isEnabled("gaia-x")
 ....
 
-The bounded context exposes two beans with complementary responsibilities:
+The bounded context exposes four beans with complementary responsibilities:
 
 [options="header",cols="1,2,3"]
 |===
 | Bean | Backing store | Responsibility
 | `TrustFrameworkRegistry` | Classpath bundles (in-memory at boot) | Owns the type-URI → role index and the bundle config tree. Read-only after startup.
-| `TrustFrameworkService` | `trust_frameworks` DB table | Mediates the admin-toggleable enabled flag per framework family. The only bean other beans inject when they need to read or change the runtime on/off state.
+| `TrustFrameworkService` | Persistence layer (family + role state) | Mediates the admin-toggleable enabled flag per framework family and the per-bundle role enabled state. The bean other beans inject when they need to read or change the runtime on/off state.
+| `TrustFrameworkBundleConfigService` | Persistence layer (per-bundle override store) | Mediates writes to the per-bundle runtime overrides of external client identifiers. Apply (merge-patch with explicit-null clear) and wholesale clear; see ADR 19.
+| `TrustFrameworkProfileResolver` | Registry + override store | Resolves the effective profile configuration for a given bundle by merging the persisted override over the YAML baseline. The compliance pipeline consumes this bean rather than reading the registry directly.
 |===
 
-This split keeps the bundle (config, roles, ontology) immutable in code/resources, while the runtime enable/disable decision stays as operator state in the database.
-Other bounded contexts (verification, admin API) inject `TrustFrameworkService` rather than the `TrustFrameworkRepository` directly, preserving the bounded-context boundary.
+This split keeps the bundle (config, base classes, ontology) immutable in code/resources, while the runtime enable/disable decision and the runtime overrides of external client identifiers stay as operator state in the database.
+Other bounded contexts inject these beans rather than the repositories directly, preserving the bounded-context boundary.
 
-**Role indexing (SHACL bundles):** for each role declared in `framework.yaml`, the registry takes the root URI as `namespace + roleName`, then walks the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every subclass under that role.
-The `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same role.
+**Base-class indexing (SHACL bundles):** for each base class declared in `framework.yaml`, the registry takes the root URI as `namespace + baseClassName`, then walks the OWL hierarchy in `ontology.ttl` via `rdfs:subClassOf*` and indexes every subclass under that base class.
+The `additional_roots` list adds non-subclass URIs (siblings, cross-hierarchy mappings) to the same base class.
 Bundles whose `validation_type` is not `shacl` are loaded but deferred (no validation engine wired yet); a WARN is logged and the bundle does not appear in `isFrameworkEnabled()`.
 
-**Resolution at verification time:** `CredentialVerificationStrategy` calls `registry.resolveRole(typeUri)` for each `credentialSubject` type encountered in a credential or VP.
-The result `(frameworkProfileId, role)` drives:
+**Resolution at verification time:** `CredentialVerificationStrategy` calls `registry.resolveBaseClass(typeUri)` for each `credentialSubject` type encountered in a credential or VP.
+The result `(frameworkProfileId, baseClass)` drives:
 
-* the `role` field carried on the single generic `CredentialVerificationResult` (the role name is taken verbatim from the bundle's `framework.yaml` — e.g. `Participant`, `ServiceOffering`, `Resource` for `gaia-x-2511`),
-* the typed-endpoint expected-role check (`/participants`, `/service-offerings`, `/resources` reject credentials whose subjects do not resolve to the matching role).
+* the `baseClass` field carried on the single generic `CredentialVerificationResult` (the base-class name is taken verbatim from the bundle's `framework.yaml` — e.g. `Participant`, `ServiceOffering`, `Resource` for `gaia-x-2511`),
+* the typed-endpoint expected-base-class check (`/participants`, `/service-offerings`, `/resources` reject credentials whose subjects do not resolve to the matching base class).
 
-A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the credential is treated as a non-typed RDF claim set and routed accordingly.
+A type URI not claimed by any bundle resolves to `ResolvedBaseClass.UNKNOWN`; the credential is treated as a non-typed RDF claim set and routed accordingly.
 
 **Bundled framework — `gaia-x-2511`:**
 
@@ -515,7 +527,7 @@ A type URI not claimed by any bundle resolves to `ResolvedRole.UNKNOWN`; the cre
 | `family` | `gaia-x`
 | `namespace` | `https://w3id.org/gaia-x/2511#`
 | `validation_type` | `shacl`
-| Declared roles | `Participant`, `ServiceOffering` (with `additional_roots: [DigitalServiceOffering]`), `Resource`
+| Declared base classes | `Participant`, `ServiceOffering` (with `additional_roots: [DigitalServiceOffering]`), `Resource`
 | `properties.trust_anchor_url` | URL of the Gaia-X Trust Anchor Registry consulted during Loire `x5u` trust-chain validation. Read at runtime by `LoirePolicyEnforcer`.
 |===
 
@@ -846,7 +858,9 @@ The JWT is extracted from the `data:` URL by stripping the media type prefix. Th
 
 The Graph Store is the interface for interacting with the Graph Database. It receives claims (extracted from credentials) and adds them to the graph database. The Graph Database only contains claims from active credentials and offers a query interface (openCypher for the Neo4j backend, SPARQL-star for the Fuseki backend). External ontologies are not queried when processing requests. The interface also exposes the backend type and supported query language so that the service layer can validate incoming queries before they reach the database. Additionally, the interface provides health-check and claim-count methods used by the Spring Boot health indicator and the startup auto-rebuild mechanism.
 
-A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`).
+All consumers depend on a single `GraphStore` bean: `RoutingGraphStore` (marked `@Primary`). It delegates every method to the currently-active adapter, held behind a `volatile` reference. The admin "Switch Backend" action calls a synchronized `setActive(GraphBackendType)` method on the routing store, so subsequent reads observe the new backend immediately without a restart. Each backend adapter (Neo4j, Fuseki) opens its driver lazily on first use; this keeps the application bootable when an inactive backend is unreachable.
+
+A `GraphStoreHealthIndicator` (Spring Boot `HealthIndicator`) reports the graph store status via the `/actuator/health` endpoint. On startup, `GraphStoreStartupChecker` detects when a real backend (Neo4j or Fuseki) is active but contains no claims, and triggers an asynchronous rebuild from the metadata store via `GraphRebuildService`. Administrators can also trigger a rebuild or check its progress through the `GraphAdminController` REST endpoints (`POST /admin/graph/rebuild`, `GET /admin/graph/rebuild/status`, `GET /admin/graph/status`). After an admin backend switch, the same rebuild path repopulates the newly-active store from the metadata store.
 
 Triggering a rebuild is **idempotent**. The rebuild re-imports claims from all active credentials into the graph via `addClaims`, which overwrites any existing claims for the same credential subject. Running a rebuild on an already up-to-date graph produces the same end state. If a rebuild is already in progress, the endpoint returns HTTP 409 (Conflict) and no second rebuild is started.
 
@@ -1727,8 +1741,8 @@ Five delegate services in `fc-service-server` implement the admin endpoints, eac
 | Service | Implements | Endpoints
 | `AdminDashboardService` | `AdminApiDelegate` | `GET /admin/me` (access check), `GET /admin/stats` (metrics), `GET /admin/health` (component health), `GET /admin/keycloak-url`
 | `TrustFrameworkAdminService` | `TrustFrameworkAdminApiDelegate` | List, toggle, and update trust frameworks; checks live connectivity per framework on list
-| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts; toggle each module on/off; expose the per-ontology subclass contribution to each registered role for the OWL module. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService` and return `400 module_disabled:<MODULE>` when off; in upload verification only SHACL is consulted, with the same error contract. The OWL toggle gates the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveRole` (see ADR 16)
-| `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | Return current graph DB status; persist preferred backend to `admin_config` (switch takes effect on restart)
+| `SchemaValidationAdminService` | `SchemaValidationAdminApiDelegate` | List schema modules (SHACL, JSON Schema, XML Schema, OWL) with toggle and schema counts; toggle each module on/off; expose the per-ontology subclass contribution to each registered base class for the OWL module. SHACL, JSON Schema, and XML Schema toggles are enforced by on-demand validation (`POST /assets/validate`) via `AssetValidationService` and return `400 module_disabled:<MODULE>` when off; in upload verification only SHACL is consulted, with the same error contract. The OWL toggle gates the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveBaseClass` (see ADR 16)
+| `GraphDatabaseAdminService` | `GraphDatabaseAdminApiDelegate` | `GET /admin/graph-database` returns the active backend, connection state, claim count, and a `rebuildNeeded` flag with the `rdfAssetCount` that a rebuild would re-index. `POST /admin/graph-database/switch` pre-flights the target backend via `GraphStoreProbe` (Bolt for Neo4j, HTTP for Fuseki, 3 s budget each), performs the live in-process swap via `RoutingGraphStore.setActive(...)`, and only on a successful swap persists the choice to `admin_config[graphstore.preferred.backend]` — so a failed swap cannot strand a stale preference for the next cold boot. The change is observable on the next call with no JVM restart. Unreachable targets and backends with no registered adapter are both rejected with `400 Bad Request` before any state change.
 |===
 
 These components in `fc-service-core` read admin-controlled settings during normal catalogue operations:
@@ -1738,10 +1752,8 @@ These components in `fc-service-core` read admin-controlled settings during norm
 | Component | Triggered by | Effect of admin configuration
 | `LoirePolicyEnforcer` | Loire envelope processing (per request, via `LoireCredentialProcessor`) | Consults `TrustFrameworkService.isEnabled("gaia-x")` to decide whether Loire-specific policies (issuer `did:web` restriction, trust-chain validation) apply at all; reads `trust_anchor_url` from the bundle's `properties` for `x5u` trust-chain validation
 | `AssetValidationServiceImpl` | On-demand asset validation (`POST /assets/validate`) | Checks module state via `SchemaModuleConfigService` for `SHACL`, `JSON_SCHEMA`, and `XML_SCHEMA`. If a module is disabled, the request is rejected with `ClientException` → `400 Bad Request`, body `module_disabled:<MODULE>` (see ADR 16).
-| `CredentialVerificationStrategy` | Credential verification | Reads SHACL and OWL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns the same `400 module_disabled:SHACL` contract on requests with `verifySchema=true`. Disabling OWL bypasses the runtime composite-ontology subclass walk in `resolveRole`; credentials whose type is only reachable through that walk fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request` (see ADR 16). JSON Schema and XML Schema toggles do not bite on this path today — every credential is JSON-LD or JWT-wrapped JSON-LD and routes to SHACL. The Gaia-X enabled flag is consulted via `TrustFrameworkService`.
+| `CredentialVerificationStrategy` | Credential verification | Reads SHACL and OWL module state via `SchemaModuleConfigService` (cached with `@Cacheable` — hot path). Disabling SHACL returns the same `400 module_disabled:SHACL` contract on requests with `verifySchema=true`. Disabling OWL bypasses the runtime composite-ontology subclass walk in `resolveBaseClass`; credentials whose type is only reachable through that walk fall through to `ResolvedBaseClass.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request` (see ADR 16). JSON Schema and XML Schema toggles do not bite on this path today — every credential is JSON-LD or JWT-wrapped JSON-LD and routes to SHACL. The Gaia-X enabled flag is consulted via `TrustFrameworkService`.
 |===
-
-NOTE: The graph backend switch (`graphstore.preferred.backend`) is not yet implemented in the Admin UI — the preference is persisted to `admin_config` but switching backends currently requires a manual config update and service restart.
 
 The `trust_frameworks` and `admin_config` tables that back this configuration layer are documented under <<section-concepts,Cross-cutting Concepts — Admin Configuration Persistence>>.
 
@@ -1753,7 +1765,7 @@ The four toggles fall into two semantic classes (ADR 16):
 
 * **Validators (SHACL, JSON Schema, XML Schema)** gate the corresponding validator wherever the catalogue would otherwise run it (on-demand validation, and credential verification with `verifySchema=true`). When off, the affected request returns `400 Bad Request` body `module_disabled:<MODULE>`. Stored schemas remain queryable regardless of toggle state.
 
-* **OWL** gates the third tier of role resolution. When off, the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveRole` is skipped; only the registry index and `additional_roots` (ADR 10) are consulted. Credentials whose type is only reachable through the subclass walk fall through to `ResolvedRole.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request`. Registry-direct types are unaffected.
+* **OWL** gates the third tier of base-class resolution. When off, the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveBaseClass` is skipped; only the registry index and `additional_roots` (ADR 10) are consulted. Credentials whose type is only reachable through the subclass walk fall through to `ResolvedBaseClass.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request`. Registry-direct types are unaffected.
 
 `OntologyImpactService` parses each `ONTOLOGY`-type schema row with Jena and counts the `rdfs:subClassOf+` descendants reachable from each registered role's root URI (plus any `additional_roots`), aggregated across active trust-framework bundles. The result is a read-only map of *(ontology id, role name) → subclass count* so operators can see what the OWL toggle is gating before flipping it off.
 
@@ -1766,7 +1778,7 @@ The SHACL toggle additionally gates the background revalidation sweep (see ADR 1
 ==== VerificationResults
 
 A single generic `CredentialVerificationResult` covers every recognized credential type.
-The previous Participant/Offering/Resource subclasses have been removed; the role (and its originating framework profile) is carried as a field on the generic result, populated from `TrustFrameworkRegistry.resolveRole(typeUri)`.
+The previous Participant/Offering/Resource subclasses have been removed; the base class (and its originating framework profile) is carried as a field on the generic result, populated from `TrustFrameworkRegistry.resolveBaseClass(typeUri)`.
 
 [source,java]
 ----
@@ -1799,7 +1811,7 @@ This role-conditional dispatch is performed by the caller (typically `Participan
 The two result types exist because the catalogue accepts two structurally different inputs through the same endpoint, and the meaning of "verification" differs sharply between them.
 
 `CredentialVerificationResult` is the output of the **VC pipeline** — the chain of checks defined by the W3C VC data model: JWT signature verification, issuer DID resolution, `iss == holder` semantic guard, `validFrom`/`validUntil` window checks, semantic type resolution against the trust-framework bundle, and (when enabled) SHACL schema validation.
-Every field on the result reflects something the VC pipeline produced: `issuer` (a DID URI), `issuedDateTime`, `validators` (one per signed JWS), `role` and `frameworkProfileId` (from `TrustFrameworkRegistry.resolveRole()`), `id` (the `credentialSubject.id`).
+Every field on the result reflects something the VC pipeline produced: `issuer` (a DID URI), `issuedDateTime`, `validators` (one per signed JWS), `baseClass` and `frameworkProfileId` (from `TrustFrameworkRegistry.resolveBaseClass()`), `id` (the `credentialSubject.id`).
 Those fields can only be populated *because the input was a Verifiable Credential* with the corresponding cryptographic and semantic structure.
 
 `NonCredentialVerificationResult` is the output of the **non-credential ingestion path** — plain RDF (Turtle, N-Triples, RDF/XML, or JSON-LD without a credential context).
