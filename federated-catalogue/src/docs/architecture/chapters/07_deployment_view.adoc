@@ -50,42 +50,18 @@ Refer to the OpenAPI specification for the exact admin-endpoint contract and to 
 
 Kubernetesfootnote:[https://kubernetes.io/[Kubernetes]] is the recommended infrastructure for production deployment. For development, Dockerfootnote:[https://www.docker.com/[Docker: Accelerated, Containerized Application Development]] in combination with docker-compose can be used.
 
-=== Admin UI — Keycloak Setup
+=== Admin UI and Keycloak Integration
 
-==== Admin Role
+The catalogue's admin endpoints are gated by a dedicated client role on the Keycloak side, and the demo portal embeds the Keycloak Admin Console in an iframe for the user-management view.
+Three architectural facts shape this surface:
 
-Users need the `ADMIN_ALL` client role to access the admin endpoints.
-Without it, the admin UI is hidden and requests are rejected as unauthorised.
+* **Admin gating.** A single client role grants access to all admin endpoints; without it the admin UI is hidden and requests are rejected as unauthorised.
+* **Realms are organised per environment.** The repository ships pre-configured realm exports for development, staging, and production.
+Which realm Keycloak loads at start-up is operator-controlled.
+* **iframe embedding requires browser-security headers to be relaxed.** Both the platform realm and the catalogue realm need `X-Frame-Options` and `Content-Security-Policy` (`frame-ancestors`) adjusted to allow the portal origin; the bundled realms include preliminary values for the demo setup.
+The Admin Console URL the portal uses can be derived from the catalogue's Keycloak settings, with an explicit override available when Keycloak is reached under a different hostname (for example, behind an ingress).
 
-==== Environment Configuration
-
-Realm files are organized by environment in `keycloak/realms/{dev,staging,prod}/`. The `KC_REALM_ENV` variable selects which to load at startup.
-
-[options="header",cols="1,2"]
-|===
-| Directory | Target environment
-| `keycloak/realms/dev/` | Local development
-| `keycloak/realms/staging/` | Staging
-| `keycloak/realms/prod/` | Production
-|===
-
-==== iFrame Embedding — Security Headers
-
-The user management page embeds the Keycloak Admin Console in an iFrame. Update these headers in **both `master` and `gaia-x` realms** (via Realm Settings → Security Defenses, or in the realm JSON):
-
-[options="header",cols="1,2"]
-|===
-| Header | Change
-| `xFrameOptions` | Remove (set to empty string `""`)
-| `contentSecurityPolicy` | Add `<portal-origin>` to `frame-ancestors`
-|===
-
-Replace `<portal-origin>` with your portal URL.
-Bundled realm files already include preliminary values.
-
-==== Admin Console URL
-
-The demo portal auto-derives the Keycloak Admin Console URL from the catalogue's Keycloak server and realm settings, with an explicit override available when Keycloak is reached under a different hostname (e.g. behind an ingress).
+Step-by-step operator procedures for realm bootstrap, role assignment, iframe header changes, and the Admin Console URL override live in the wiki https://github.com/eclipse-xfsc/federated-catalogue/wiki/FC-Administration-Guide[FC Administration Guide].
 
 === Runtime Admin Configuration
 

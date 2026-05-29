@@ -107,7 +107,9 @@ The graph database backend is **pluggable**. Three adapters are available:
 | `NONE` | No-op / disabled | —
 |===
 
-All three adapters are wired unconditionally at boot. A single `RoutingGraphStore` (marked `@Primary`) holds the currently-active adapter behind a volatile reference and delegates every `GraphStore` call to it. Core services contain no backend-specific logic; they depend on `GraphStore` only.
+All three adapters are wired unconditionally at boot.
+A single `RoutingGraphStore` (marked `@Primary`) holds the currently-active adapter behind a volatile reference and delegates every `GraphStore` call to it; core services contain no backend-specific logic and depend on `GraphStore` only.
+The full description of the `GraphStore` interface and the routing-store behaviour lives in <<_graph_store,Graph Store>> further down this chapter.
 
 The active backend is resolved on cold boot in the following order:
 
@@ -175,7 +177,7 @@ a| Responsible for applying the defined verification rules on credentials (Verif
 * **Verification pipeline:** Syntactic, semantic, and cryptographic verification of credentials. The credential is checked as a whole — if VC verification fails, the entire verification fails.
 * **Strategy pattern:** `VerificationServiceImpl` acts as a thin Context that delegates to one of two `RdfIngestionStrategy` implementations — `CredentialVerificationStrategy` (recognised credentials and ambiguous JWTs) or `NonCredentialIngestionStrategy` (plain RDF payloads ingested as raw triples).
 * **Format detection:** `CredentialFormatDetector` classifies incoming RDF content by iterating an ordered chain of `CredentialFormatProcessor` beans. Recognized credential formats (Loire JWT, VC 2.0) enter the credential verification pipeline. Content classified as `UNKNOWN` (no recognized credential format) is routed to `NonCredentialIngestionStrategy`, which delegates triple extraction to `ClaimExtractionService.extractAllTriples()`. See <<_format_detection>>.
-* **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `NonCredentialIngestionStrategy` extracts all triples using Apache Jena via `ClaimExtractionService`. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted `RdfClaim` instances. See <<_non_credential_rdf_extraction>>.
+* **Non-credential RDF extraction:** For RDF assets that are not Gaia-X Credentials, `NonCredentialIngestionStrategy` extracts all triples using Apache Jena via `ClaimExtractionService`. Supports JSON-LD, Turtle, N-Triples, and RDF/XML via a format fallback sequence. Returns a `NonCredentialVerificationResult` containing all extracted claims (each one a subject–predicate–object triple, modelled by the `RdfClaim` record described under <<_claim>> below). See <<_non_credential_rdf_extraction>>.
 * **JWT content preprocessing:** `JwtContentPreprocessor` detects JWT-wrapped credentials using a two-signal approach (Content-Type header as primary signal, body prefix as fallback) and unwraps the JWT envelope to produce JSON-LD for downstream processing. See <<_jwt_content_preprocessing>>.
 * **JWT signature verification:** `JwtSignatureVerifier` verifies compact JWT signatures by resolving the issuer's DID document, matching `kid` to an `assertionMethod` verification method, and cryptographically verifying the JWS. Also verifies inner VC JWTs from `EnvelopedVerifiableCredential` entries in VP JWTs. See <<_jwt_signature_verification>>.
 * **Loire JWT parsing:** `LoireJwtParser` decodes Loire-format JWTs where the credential is the top-level JWT payload (no `vc`/`vp` claim wrapper), conforming to ICAM v24.07. See <<_loire_jwt_parsing>>.
@@ -291,7 +293,7 @@ classDiagram
     }
 ....
 
-The single `CredentialVerificationResult` type carries the resolved base class (e.g. `Participant`, `ServiceOffering`, `Resource` for the `gaia-x-2511` bundle) as a string field populated from `ResolvedBaseClass.baseClass`.
+The single `CredentialVerificationResult` type carries the resolved base class (e.g. `Participant`, `ServiceOffering`, `Resource` for the `gaia-x-2511` bundle) as a string field populated from `ResolvedBaseClass.baseClass`. *Base class* and *trust-framework bundle* are introduced in <<_trust_framework_bundles_and_base_class_resolution,Trust Framework Bundles and Base-class Resolution>> below; in short, a base class is a top-level credential-subject type declared by a trust-framework bundle (e.g. *Participant* in Gaia-X), and the resolved value drives dispatch and validator selection.
 Typed result subclasses (`CredentialVerificationResultParticipant`, `…Offering`, `…Resource`) and the deprecated schema-validation overloads have been removed; callers use `SchemaValidationService` directly for schema validation.
 
 [#_verification_strategy_pattern]
