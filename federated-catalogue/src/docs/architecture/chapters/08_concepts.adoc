@@ -11,6 +11,8 @@ ifndef::imagesdir[:imagesdir: ../../images]
 [[section-concepts]]
 == Cross-cutting Concepts
 
+This chapter collects the concerns that cut across the components introduced in <<section-building-block-view>>: how persistent data is backed up, how the catalogue logs, how trust frameworks are packaged and overlaid, how admin configuration is persisted, the admin-API mutation conventions, the input-parsing security posture, and the asset content-kind / type taxonomy that drives metadata enrichment.
+
 === Backup
 Backing up a running application is a basic administrative operation. The recommended runtime environment for the federated catalogue is Kubernetes. See the previous section for more information. Therefore, to back up the federated catalogue, well known tools can be used.
 

@@ -11,6 +11,13 @@ ifndef::imagesdir[:imagesdir: ../../images]
 [[section-design-decisions]]
 == Architecture Decisions
 
+This chapter records the architecture decisions that shape the Federated Catalogue, in chronological order of the decision itself rather than in dependency order.
+Each ADR captures the context, the options considered, the decision taken, and its rationale.
+ADRs may reference each other (and are sometimes superseded by later ones); the chapter is meant to be browsed by topic, not necessarily read linearly.
+
+NOTE: ADR numbers 11 through 14 are intentionally absent: they were drafted as exploratory options for the bundle/profile design but were superseded by ADR 10 (Trust Framework Bundles) before being recorded as decisions.
+The numbering gap is preserved to keep stable references to the surviving ADRs (10, 15, …) intact.
+
 === ADR 1: Monolithic vs. Microservices
 **Context:** Are the subcomponents implemented as separate micro-services or are they integrated into a single service.
 

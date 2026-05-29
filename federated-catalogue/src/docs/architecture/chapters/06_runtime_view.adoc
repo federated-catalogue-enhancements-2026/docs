@@ -1244,8 +1244,9 @@ sequenceDiagram
 ....
 
 === Detailed sub-scenarios
-The previous section described the sce
-This section describes some sub scenarios, that occure
+
+The preceding sections described the end-to-end scenarios.
+This section zooms in on the recurring sub-scenarios that they share — internal flows that are referenced from several places above and benefit from being explained once in detail.
 
 ==== Store Credentials to the Asset Store
 This sequence diagram shows the detailed flow when storing credentials in the Asset Store.

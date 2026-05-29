@@ -319,7 +319,7 @@ SELECT ?s ?p ?o WHERE {
 ==== Neo4j (openCypher) reference
 
 The Neo4j backend remains available; queries are sent to `POST /query` with `Content-Type: application/opencypher-query`.
-The example below is the openCypher equivalent of <<anchor:_all_nodes_and_relationships,All Nodes and Relationships>>.
+The example below is the openCypher equivalent of <<_all_nodes_and_relationships,All Nodes and Relationships>>.
 
 [source,cypher]
 ----

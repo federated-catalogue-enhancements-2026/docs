@@ -8,9 +8,19 @@ ifndef::imagesdir[:imagesdir: ../../images]
 
 :toc:
 
-[[section-building-block-viev]]
+[[section-building-block-view]]
+== Building Block View
 
-== Overall System overview
+This chapter is the longest in the document and is organised in three levels of zoom:
+
+* **Level 1 — Components of the Federated Catalogue.** The handful of components that an external observer can see (Catalogue, Authentication, Graph-DB, File Store, Metadata Store).
+* **Level 2 — Inside the Catalogue.** Verification pipeline, schema management, validator cache, audit history, file store, metadata store, asset upload service, link service, admin API.
+* **Level 3 — Internal abstractions and data types.** Claim model, validator interface, low-level record types.
+
+Read top-to-bottom for orientation; jump by section for reference.
+Cross-cutting concerns (trust-framework bundles, admin configuration persistence, security posture, asset content-kind taxonomy) are in <<section-concepts>>.
+
+=== Overall System overview
 
 This document describes the architecture of the Federated Catalogue, a component of the XFSC stack within the Gaia-X ecosystem.
 It originates in the Gaia-X Federation Services originally defined by the GXFS programme (2021–2024); see the glossary entry for GXFS / XFSC.
@@ -1234,7 +1244,7 @@ The schema metadata is persisted in the relational metadata store and conceptual
 
 * a schema-file entity carrying the schema identifier (the unique business key), the schema type (one of *ontology*, *shape*, *vocabulary*), the raw schema content, and the same audit-attribution columns as the asset entity;
 * a schema-term entity holding the set of terms (classes, properties, vocabulary entries) declared by each schema, with global uniqueness across all schema files;
-* a revalidator-chunk entity used by the background re-validation worker (see <<_re_validation>>) to checkpoint its progress.
+* a revalidator-chunk entity used by the background re-validation worker (see <<_revalidation_service>>) to checkpoint its progress.
 
 The relationships are one schema-file to many schema-terms; the chunk entity is independent.
 As before, the authoritative column shape lives in the Liquibase changelog.

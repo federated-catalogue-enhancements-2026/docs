@@ -9,6 +9,12 @@ ifndef::imagesdir[:imagesdir: ../../images]
 :toc:
 
 [[section-system-scope-and-context]]
+== System Scope and Context
+
+The Federated Catalogue is a federation-services component: it is operated by one party (the *Federator*) and consumed by many (Participants in the federation, acting in Provider or Consumer roles).
+It does not have a direct end-user interface — clients interact with it through a Portal or through their own services that speak the catalogue's API.
+The technical deployment topology, including the surrounding Keycloak, PostgreSQL, and graph store, is described in <<section-deployment-view>>.
+
 === Business Context
 The following table shortly lists the Stakeholders for the federated catalogue:
 

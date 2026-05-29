@@ -39,7 +39,11 @@ Quality goals regarding, e.g., performance, safety, security, and standards conf
 | Participants in a Gaia-X ecosystem | n/a | Participants can interact with a Catalogue as expected.
 |===
 
-=== Assumptions (Original 2022 implementation)
+=== Assumptions
+
+NOTE: The assumptions below are **historical context** from the 2022 reference implementation, captured here so that present-day architecture choices remain understandable.
+Several of them no longer hold literally — Gaia-X has since matured (Loire 25.05 architecture, ICAM 24.07, 25.11 ontology), and the catalogue has generalised "Self-Description" to "Asset" and "Credential".
+Where a present-day statement contradicts an assumption below, the present-day statement (and the relevant ADR) wins.
 
 Since this project is conducted in an early stage of the Gaia-X development there is no experience how credentials (formerly called Self-Descriptions) will look like in practice. Therefore, several assumptions regarding their characteristics have to be made. These assumptions will be explained in this section.
 

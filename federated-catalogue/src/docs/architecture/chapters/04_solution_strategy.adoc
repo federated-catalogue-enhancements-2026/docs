@@ -11,13 +11,17 @@ ifndef::imagesdir[:imagesdir: ../../images]
 [[section-solution-strategy]]
 == Solution Strategy
 
-This chapter describes some basic concepts and details, when handling credentials and Schemas. They are needed to understand the details.
+This chapter introduces the design concepts that the rest of the document builds on: how the catalogue thinks about credentials and assets, how content arrives at the upload endpoint, how identifiers are assigned, and how schemas are categorised.
+Detailed building blocks (verification pipeline, graph store, admin API) follow in <<section-building-block-view>>; runtime flows are in chapter 6; the deployment surface is in chapter 7.
+
+TIP: Terms used here that are not introduced inline (Asset, Trust Framework Bundle, Base Class, Loire, Tagus, ICAM, EVC/EVP, on-demand validation) are defined in the <<section-glossary,Glossary>>.
 
 === Credentials
 
 NOTE: What earlier Gaia-X generations called a "Self-Description" has been renamed to **Credential**footnote:[https://docs.gaia-x.eu/technical-committee/identity-credential-access-management/24.07/credential_format/[Gaia-X Identity, Credential and Access Management 24.07 (Loire) / Credential format]] — a Verifiable Presentation (VP) containing one or more Verifiable Credentials (VCs), or a standalone VC, that describes a trust-framework entity.
-At the catalogue's API and storage level, the generic term **Asset** also covers non-RDF content that can be used in the lenient default configuration without verification.
-This section uses "credential" to describe the original domain concept that remains available in the strict configuration profile.
+At the catalogue's API and storage level, the generic term **Asset** also covers non-RDF content (PDFs, plain JSON, XML, binaries) that can be uploaded without going through the full verification pipeline — see <<_non_rdf_assets>> below.
+The catalogue ships two deployment profiles: a **lenient default profile** that runs only semantic validation and stores anything else as-is, and a **strict profile** that enables the full Gaia-X verification pipeline; both are introduced in <<_verification_profiles,chapter 5>>.
+This section uses "credential" to describe the original domain concept that remains available in the strict profile.
 
 NOTE: **Target Gaia-X release.** The current implementation has been written and is maintained against the **Gaia-X Loire** trust framework (ICAM 24.07).
 The next Gaia-X release (Danube) is **not yet supported**; ADR 17 describes the planned migration path.
@@ -66,7 +70,8 @@ The supported IRI formats are:
 * **Generic URNs** — e.g., `urn:nid:nss`
 * **HTTP/HTTPS IRIs** — e.g., `https://example.org/resource/123`
 
-IRI assignment is handled by the `IriGenerator` component and validated by the `IriValidator` component (see <<section-building-block-viev>>). The assignment strategy depends on the asset type:
+IRI assignment is handled by the `IriGenerator` component and validated by the `IriValidator` component (see <<section-building-block-view>>).
+The assignment strategy depends on the asset type:
 
 * **RDF assets (credentials):** The IRI is extracted from the content — `credentialSubject.id` for Verifiable Credentials, or `@id` for generic JSON-LD. OWL ontologies, SHACL shapes, and SKOS concept schemes use their respective root identifiers. If no IRI can be extracted, a UUID URN is generated as fallback.
 * **Non-RDF assets:** A UUID URN (`urn:uuid:...`) is generated automatically. Each upload receives a unique identifier per RFC 4122.
