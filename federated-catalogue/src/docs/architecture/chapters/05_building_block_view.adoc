@@ -392,7 +392,10 @@ classDiagram
 
 `VerificationServiceImpl` injects both strategy implementations through constructor injection (`@RequiredArgsConstructor`).
 `resolveStrategy(ContentAccessor)` returns `credentialStrategy` for any JWT body and for any JSON-LD body the format detector recognises as a credential; `nonCredentialStrategy` is returned only when the body is plain JSON-LD / RDF and the detector yields `UNKNOWN`.
-After the strategy returns, the service performs one last cross-cutting check: if the result is a credential and `baseClass` is `null`, the credential type is unrecognised by every active trust-framework bundle and the request is rejected with a 400 listing the active bundles and their declared base classes.
+After the strategy returns, the service consults the `verification.require-base-class` configuration flag (default `false`).
+When the flag is `true` and the result is a credential whose `baseClass` is `null`, the credential type is unrecognised by every active trust-framework bundle and the request is rejected with a 400 listing the active bundles and their declared base classes.
+When the flag is `false`, the credential is accepted with a `null` base class — the default trades the post-strategy safety net for the ability to ingest cross-framework payloads.
+See <<_verification_toggle_interactions,Verification toggle interactions>> for how this flag composes with `verification.semantics`.
 
 `CredentialVerificationStrategy` implements the credential pipeline — format dispatch, JWT signature verification (delegated to the matching `CredentialFormatProcessor`), Loire policy enforcement (`LoirePolicyEnforcer`), EVC/EVP unwrap and inner-VC verification (`EnvelopedCredentialResolver`), JSON-LD unwrap, semantic and schema validation, claim extraction, and protected-namespace filtering.
 `NonCredentialIngestionStrategy` extracts every triple from a plain RDF body via `ClaimExtractionService.extractAllTriples`, applies the protected-namespace filter, and returns a `NonCredentialVerificationResult` — no semantic, schema, or signature verification (those concepts only apply to credentials).
@@ -405,6 +408,38 @@ Loire-specific policies (issuer DID method restriction, `x5u` trust-chain valida
 
 `EnvelopedCredentialResolver` owns all W3C VC 2.0 `EnvelopedVerifiableCredential` / `EnvelopedVerifiablePresentation` plumbing: detecting and unwrapping outer EVC/EVP wrappers, rewriting a VP's `verifiableCredential` array so inner EVC entries become inline JSON-LD VCs for downstream claim extraction, and verifying inner-VC signatures when the outer is a VP JWT.
 Format-specific JWT unwrapping is delegated back to the matching `CredentialFormatProcessor.unwrapNested()`; the resolver itself only handles the envelope mechanics.
+
+[[_verification_toggle_interactions]]
+===== Verification toggle interactions
+
+Three deploy-time flags shape what the credential pipeline rejects:
+
+`verification.semantics` (default `true`):: VP/VC envelope semantic checks — structural validation of `VerifiablePresentation` and `VerifiableCredential` bodies, JWT holder claim, ambiguous-multi-base-class detection, and (when at least one trust framework is enabled) rejection of credentials whose `credentialSubject` carries no recognised type.
+Violations surface as `HTTP 422 "Semantic error: …"` from inside the strategy.
+This flag does **not** gate SHACL and does **not**, on its own, reject unknown `@type` when no trust framework is enabled.
+
+`verification.schema` (default `false`):: SHACL shape validation on extracted claims.
+Composes with the SHACL admin module: when `schema=true` but the SHACL module is disabled at runtime, the request is rejected with `HTTP 400 module_disabled:SHACL`.
+
+`verification.require-base-class` (default `false`):: Post-strategy null-`baseClass` safety net described above.
+Returns `HTTP 400 "Credential type is not resolvable …"` when a credential survived the strategy with a `null` base class.
+
+The unknown-`@type` case is the one where these flags interact.
+The outcome depends on whether any trust framework is enabled and on the two relevant flags:
+
+[options="header",cols="1,1,1,3"]
+|===
+| TF enabled? | `semantics` | `require-base-class` | Outcome on a credential whose `@type` does not match any registered base class
+
+| yes | `true`  | _any_   | `HTTP 422` — strategy rejects with "no proper CredentialSubject found"
+| yes | `false` | `true`  | `HTTP 400` — post-strategy gate fires
+| yes | `false` | `false` | accepted, `baseClass = null`
+| no  | _any_   | `true`  | `HTTP 400` — post-strategy gate fires (the 422 path requires a TF to be enabled)
+| no  | _any_   | `false` | accepted, `baseClass = null`
+|===
+
+With both `semantics=true` and a trust framework enabled — the strict overlay — the 422 fires first and the post-strategy gate is effectively unreachable.
+The default profile (`semantics=true`, `require-base-class=false`, no trust framework enabled out of the box) accepts cross-framework payloads with a `null` base class; the strict overlay flips `require-base-class` on and enables a trust framework, restoring the legacy reject-on-unknown-type behaviour.
 
 [[_trust_framework_bundles_and_base_class_resolution]]
 ===== Trust Framework Bundles and Base-class Resolution
@@ -1765,7 +1800,10 @@ The four toggles fall into two semantic classes (ADR 16):
 
 * **Validators (SHACL, JSON Schema, XML Schema)** gate the corresponding validator wherever the catalogue would otherwise run it (on-demand validation, and credential verification with `verifySchema=true`). When off, the affected request returns `400 Bad Request` body `module_disabled:<MODULE>`. Stored schemas remain queryable regardless of toggle state.
 
-* **OWL** gates the third tier of base-class resolution. When off, the runtime composite-ontology subclass walk in `CredentialVerificationStrategy.resolveBaseClass` is skipped; only the registry index and `additional_roots` (ADR 10) are consulted. Credentials whose type is only reachable through the subclass walk fall through to `ResolvedBaseClass.UNKNOWN` and are rejected by the verification entry point with `400 Bad Request`. Registry-direct types are unaffected.
+* **OWL** gates the third tier of base-class resolution.
+When off, the runtime composite-ontology subclass walk is skipped; only the registry index and the bundle's additional-roots declarations (ADR 10) are consulted.
+Credentials whose type is only reachable through the subclass walk then fail base-class resolution and surface at the post-strategy `require-base-class` gate (see <<_verification_toggle_interactions,Verification toggle interactions>>): they are rejected with a 400 when the gate is on, accepted with a `null` base class when it is off (the default).
+Registry-direct types are unaffected.
 
 `OntologyImpactService` parses each `ONTOLOGY`-type schema row with Jena and counts the `rdfs:subClassOf+` descendants reachable from each registered role's root URI (plus any `additional_roots`), aggregated across active trust-framework bundles. The result is a read-only map of *(ontology id, role name) → subclass count* so operators can see what the OWL toggle is gating before flipping it off.
 
