@@ -263,7 +263,7 @@ service-offering:
   type: "https://w3id.org/gaia-x/2511#ServiceOffering"
 ----
 
-Format-aware resolution in `CredentialVerificationStrategy.resolveBaseClass()`:
+Format-aware resolution in `CredentialIngestionStrategy.resolveBaseClass()`:
 
 * `GAIAX_V2_LOIRE` → uses `type` (2511 URIs)
 * `VC2_DANUBETECH` → skips Gaia-X base-class resolution entirely (domain-specific ontologies)
@@ -578,7 +578,7 @@ Registry-direct types (Participant, ServiceOffering, Resource for the Gaia-X 251
 * Disabling a validator is *permissive* (a check is skipped); disabling OWL is *restrictive* (the catalogue stops recognising custom subclasses).
 The asymmetry is intentional: gating base-class resolution is the strongest demonstrable effect for a type-vocabulary input, and a uniform "skip a check" semantic does not exist for OWL.
 
-* The OWL toggle is independent of the caller's `verifySchema` and `verifySemantics` flags.
+* The OWL toggle is independent of the caller's `verifySemantics` flag and the `requireBaseClass` parameter.
 Type dispatch is a configuration of the catalogue's type system, not a per-request validation step, so disabling OWL affects every internal caller of the verification path — asset upload, provenance ingest, asset metadata flow, base subscriber, and on-demand base-class resolution — independent of how those callers parameterise their request.
 
 * The SHACL toggle also gates the periodic revalidation sweep over the existing claims graph.
