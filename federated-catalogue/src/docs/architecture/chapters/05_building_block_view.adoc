@@ -1554,12 +1554,15 @@ Invalid IRIs (null, blank, or syntactically malformed) are rejected before stora
 
 ===== Asset Upload Configuration
 
-[options="header",cols="2,1,3"]
-|===
-| Property | Default | Description
-| `federated-catalogue.rdf.content-types` | `[application/ld+json, application/vc+ld+json, application/vp+ld+json, application/vc+jwt, application/vp+jwt, text/turtle, application/n-triples, application/rdf+xml]` | MIME types classified as RDF by `RdfDetector`. Credential types (`vc+ld+json`, `vc+jwt`, etc.) enter the full verification pipeline. Non-credential RDF serializations (Turtle, N-Triples, RDF/XML) support claim extraction only and do not enter the verification pipeline. SHACL schema validation is never invoked at upload for non-credential RDF. On-demand validation is available via `POST /assets/validate`.
-| `federated-catalogue.file-store.asset.location` | _(required in production)_ | File system directory for non-RDF asset content
-|===
+Two boot-time configuration concerns are relevant to the upload pipeline:
+
+* The **RDF MIME-type allowlist** determines which content types the catalogue classifies as RDF.
+Credential MIME types (`application/vc+ld+json`, `application/vc+jwt`, and the presentation variants) enter the credential verification path (semantic, signature, trust-framework stages — see <<_verification_profiles>>); non-credential RDF serializations (Turtle, N-Triples, RDF/XML) enter the claim-extraction-only path.
+SHACL schema validation is never invoked at upload for either path; on-demand validation is available via `POST /assets/validate`.
+Operators may extend or restrict this list to match their deployment's verification capabilities.
+* The **non-RDF asset File Store location** must be configured in production deployments; the application fails to start if it is missing.
+
+Exact property names, defaults, and environment-variable forms are documented in the wiki https://github.com/eclipse-xfsc/federated-catalogue/wiki/Installation-%26-Configuration-Guide[Installation & Configuration Guide].
 
 [[_asset_link_service]]
 ==== Asset Link Service
