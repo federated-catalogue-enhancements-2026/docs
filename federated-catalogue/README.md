@@ -1,9 +1,19 @@
 # Architecture document for the GXFS Catalogue
+
 ## XFSC Federated Catalogue
-The content of the document is available here
-* [PDF](
-https://gitlab.com/gaia-x/data-infrastructure-federation-services/cat/architecture-document/-/jobs/artifacts/main/raw/build/pdf/architecture/catalogue-architecture.pdf?job=generate_pdf)
-* [Website](https://gaia-x.gitlab.io/data-infrastructure-federation-services/cat/architecture-document/architecture/catalogue-architecture.html)
+
+The rendered architecture document (HTML site + PDF) is produced by the
+[`Run docToolchain`](https://github.com/eclipse-xfsc/docs/actions/workflows/buildDocs.yml) workflow on every push to
+`main` and uploaded as the `Documentation` artifact (containing
+`federated-catalogue/build/pdf/architecture/catalogue-architecture.pdf` and the full `build/html5/` site).
+
+Get the latest rendered docs:
+
+1. Open the [latest successful `Run docToolchain` run on `main`](https://github.com/eclipse-xfsc/docs/actions/workflows/buildDocs.yml?query=branch%3Amain+is%3Asuccess).
+2. Scroll to the **Artifacts** section and download `Documentation.zip`.
+3. Unzip — open `catalogue-architecture.pdf` for the PDF or `html5/architecture/catalogue-architecture.html` for the website.
+
+> Note: GitHub Actions artifacts expire after 90 days. For a permanent reference, link to the workflow run's commit SHA.
 
 ## FACIS - XFSC Catalogue Enhancements
 The XFSC Federated Catalogue (CAT) manages metadata objects (typically credentials or other RDF descriptions, e.g., of Providers, their Service Offerings and Resources) throughout their life cycle and exposes them to Consumers. It enables verification of these objects against given schemas and/or trust anchors. 
