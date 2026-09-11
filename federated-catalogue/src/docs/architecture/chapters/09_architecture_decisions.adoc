@@ -749,12 +749,13 @@ This is a syntactic check: symbolic hostnames are not resolved at validation tim
 
 **Related:** ADR 5, ADR 9, ADR 18.
 
-**Context:** Three adjustments taken during delivery changed what the catalogue ships relative to the specified functionality: one requirement is deferred behind the maturity of an external dependency, support for one credential generation was withdrawn, and the graph-store backend shipped as the default is being substituted.
+**Context:** Three adjustments taken during delivery changed what the catalogue ships relative to the specified functionality: one requirement is deferred behind the maturity of an external dependency, support for one credential generation was withdrawn, and the graph-store backend shipped as the default was substituted.
 Two of the three already have their technical decision recorded — the credential-generation withdrawal in ADR 9, the graph-backend mechanism in ADR 18 — but in neither case is the scope dimension recorded: that delivered functionality was consciously reduced, on what grounds, and under what condition it would be restored.
 The third has no entry at all.
 A decision log that records only the technical shape of a change leaves a reader unable to tell a deliberate reduction from an oversight.
+Of the three, only the deferral is still open and carries a reactivation trigger; the other two are complete, and what is recorded for them is the condition under which they would be revisited rather than a pending step.
 
-**Decision:** Verifiable-credential-based role assertions are deferred, support for the earlier credential generation is discontinued, and the shipped graph-store default is being substituted.
+**Decision:** Verifiable-credential-based role assertions are deferred, support for the earlier credential generation is discontinued, and the shipped graph-store default was substituted.
 All three are recorded in this single entry, each with the same four statements — what was reduced, why, what the consequence is and who carries it, and what would reverse it.
 The technical content of ADR 9 and ADR 18 is not repeated here; this entry records the scope decision and points at them.
 
@@ -763,7 +764,7 @@ The technical content of ADR 9 and ADR 18 is not repeated here; this entry recor
 **Reduction:** Role-based access control driven by role assertions carried in a Verifiable Credential held in a user's wallet and presented during authentication — such that the catalogue reports the credential-asserted role among the user's roles — is deferred.
 The requirement remains part of the specification and its solution is designed; it is not built.
 It is the only functional requirement whose delivery is deferred.
-The designed solution keeps the catalogue out of the wallet exchange entirely: presentation verification is delegated to the identity provider over OpenID4VP, and the catalogue retains the OAuth2 resource-server pipeline of ADR 5, receiving an ordinary access token whose role claims were derived from the presented credential.
+The designed solution keeps the catalogue out of the wallet exchange entirely: presentation verification is delegated to the identity provider over OpenID4VP, and the catalogue retains its existing OAuth2 resource-server pipeline, receiving an ordinary access token whose role claims were derived from the presented credential and become Spring Security authorities by the mapping of ADR 5.
 The credential format is SD-JWT VC, because the identity provider's issuance and verification support covers the SD-JWT and JWT VC serialisations and not JSON-LD proof formats.
 Catalogue-side code is therefore close to none; this is an identity-provider configuration concern.
 
@@ -793,17 +794,26 @@ On the catalogue side a single verification path and a single configuration surf
 **Reversal:** Effectively none.
 Reversal would mean reinstating a retired data model together with its signature stack, so this adjustment is to be read as permanent rather than as a reduction awaiting a trigger.
 
-==== Graph-Store Backend of the Shipped Default — Adjustment in Progress
+==== Graph-Store Backend of the Shipped Default — Substituted
 
-**Reduction:** The redistributed artefacts are being moved away from shipping the initially-planned graph backend as the default and towards the alternative backend already supported behind the same interface.
-This entry records the decision; the repackaging is in progress and not yet complete.
+**Reduction:** The redistributed artefacts no longer ship the initially-planned graph backend as the default; the default is the alternative backend already supported behind the same interface.
+The adjustment had two parts, both carried out: the shipped default was switched, and the copyleft-licensed artefacts of the initially-planned backend were removed from the redistributed archive and container image.
+The server of that backend is a separate matter: it was never a redistributed component in the first place, and the deployment packaging does not provision one.
 The runtime backend-switching mechanism is recorded in ADR 18 and is unchanged by this decision.
 
-**Rationale:** Licence compatibility of the redistributed artefacts.
-The analytics plugin family of the initially-planned backend is copyleft-licensed (GPL-3.0), whereas the catalogue's own distribution is permissively licensed (Apache-2.0).
-Copyleft permits absorbing permissive code into a copyleft work, not the reverse, so those artefacts must not form part of the redistributed archive or container image.
+**Rationale:** Licence compatibility of the redistributed artefacts, which is the single constraint behind both parts.
+The catalogue's own distribution is permissively licensed (Apache-2.0), whereas both the analytics plugin family of the initially-planned backend and the community edition of its server are copyleft-licensed (GPL-3.0).
+Copyleft permits absorbing permissive code into a copyleft work, not the reverse, so neither may form part of the redistributed archive or container image.
+The client library the catalogue links against to reach that backend is permissively licensed and remains in place, so the constraint falls on the redistributed server-side artefacts, not on the ability to talk to that backend.
+This is why the two parts belong to one constraint without being one decision.
+The artefact removal is compelled by the licence directly.
+The default moved because the server of the substituted backend is itself permissively licensed and can therefore be redistributed: the project builds that server as a container image, and the deployment packaging provisions an instance of it.
+The initially-planned backend stays fully reachable, but only at an address the operator supplies and runs, because its server is the part that cannot be redistributed.
 
-**Consequences:** The shipped default will narrow; no capability is removed from the product.
-The interface continues to support the initially-planned backend, so operators who want the analytics capability can still run that backend themselves and switch the catalogue to it.
+**Consequences:** The shipped default is narrower, and the distribution no longer provides the analytics capability itself.
+The interface continues to support the initially-planned backend, so an operator who runs their own instance of it — with whatever analytics they install there — keeps that capability and can switch the catalogue to it.
+What is withdrawn is the distribution's provision of it, not the catalogue's support for it.
 
-**Reversal:** A licence-compatible packaging of the analytics capability, or the removal of that capability from the shipped default — either would remove the licence constraint behind this adjustment.
+**Reversal:** The initially-planned backend becomes eligible as a shipped default again only if its server, and the analytics capability alongside it, become available under a licence the distribution can redistribute.
+Both parts must change: a permissively packaged analytics capability alone would still leave a server that cannot be shipped.
+Absent that, the adjustment stands.
