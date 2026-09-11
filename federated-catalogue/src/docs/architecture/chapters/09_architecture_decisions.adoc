@@ -296,7 +296,7 @@ The official Gaia-X 2511 OWL file from the registryfootnote:[https://registry.la
 
 The catalogue's `SchemaStoreImpl` only needs the **class hierarchy** (`owl:Class` declarations and `rdfs:subClassOf` relationships) for type resolution via the SPARQL subclass walk in `ClaimValidator.resolveSubjectBaseClass()`. Data properties, annotation properties, OWL restrictions, and enum individuals are not queried by the type resolution SPARQL and are therefore unnecessary.
 
-The bundled `gx-2511.ttl` is a **stripped extraction** containing only:
+The bundled `ontology.ttl` is a **stripped extraction** containing only:
 
 * The `owl:Ontology` declaration — required because `SchemaStoreImpl.analyzeAndValidate()` classifies files by checking for `owl:Ontology`, `sh:NodeShape`, or `skos:ConceptScheme`; without it the file would not be recognized as an ontology
 * All `owl:Class` declarations
@@ -456,7 +456,7 @@ properties:
 The `base_classes:` map is the bundle author's hand-written declaration of which classes the catalogue dispatches on as top-level credential subjects.
 It cannot be extracted from the ontology, because trust-framework ontologies do not mark classes as "catalogue base classes":
 
-* In Gaia-X 2511 specifically (`gx-2511`, the only framework currently shipped), every `gx:` subject in the ontology is exactly one of `owl:Class`, `owl:DatatypeProperty`, or `owl:ObjectProperty`.
+* In Gaia-X 2511 specifically (`gaia-x-2511`, the only framework currently shipped), every `gx:` subject in the ontology is exactly one of `owl:Class`, `owl:DatatypeProperty`, or `owl:ObjectProperty`.
 There is no `gx:CatalogueBaseClass` superclass, no `isBaseClass` annotation property, no skos scheme that groups Participant + ServiceOffering + Resource together.
 The 213 named OWL classes are structurally indistinguishable from one another as far as the model is concerned — Address, Endpoint, RegistrationNumber and Participant are peers in the type hierarchy.
 * `skos:inScheme` exists on most classes but is purely topical categorisation (legal, storage, compute, …); the `gx:participant` scheme happens to contain only Participant, but `gx:legal` contains 37 classes that are not base classes.
