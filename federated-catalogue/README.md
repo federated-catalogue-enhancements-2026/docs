@@ -13,10 +13,10 @@ applies to GitHub Actions artifacts.
 
 | Format | Download | Documentation status |
 |---|---|---|
-| PDF | [`catalogue-architecture.pdf`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/download/cat-architecture-2026-09-14-4530ee3/catalogue-architecture.pdf) | 2026-09-14 |
-| HTML (archive) | [`catalogue-architecture-html.zip`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/download/cat-architecture-2026-09-14-4530ee3/catalogue-architecture-html.zip) | 2026-09-14 |
+| PDF | [`catalogue-architecture.pdf`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/download/cat-architecture-2026-09-14-9ee18f5/catalogue-architecture.pdf) | 2026-09-14 |
+| HTML (archive) | [`catalogue-architecture-html.zip`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/download/cat-architecture-2026-09-14-9ee18f5/catalogue-architecture-html.zip) | 2026-09-14 |
 
-Release: [`cat-architecture-2026-09-14-4530ee3`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/tag/cat-architecture-2026-09-14-4530ee3)
+Release: [`cat-architecture-2026-09-14-9ee18f5`](https://github.com/federated-catalogue-enhancements-2026/docs/releases/tag/cat-architecture-2026-09-14-9ee18f5)
 <!-- architecture-document-links:end -->
 
 Every published release is listed under
